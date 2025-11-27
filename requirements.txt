@@ -1,0 +1,5 @@
+typer[all]
+pydantic
+watchdog
+pytest
+pytest-mock
