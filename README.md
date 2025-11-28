@@ -19,12 +19,7 @@ The core goal of this project is to solve the problem of environment isolation a
 Ensure that Python 3.8+ and Git are installed in your environment.
 
 ```bash
-# Clone the project
-git clone <your-repo-url>
-cd workspace
-
-# Install dependencies
-pip install -e .
+pip install dev-ws
 ```
 
 ## 🚀 Quick Start
