@@ -94,40 +94,67 @@ workspace create momo
 "rules_repo": "luoking-creatify-coding"
 ```
 
-#### 场景 3：在 Workspace 根目录执行 Live Preview
+#### 场景 3：在 workspace 根目录执行 live preview
 
 **命令**：
 
 ```bash
-cd ./workspace-lulu
-workspace preview
+workspace-cli preview
 ```
 
 **结果**：
 
-- 自动 `add` 当前 workspace 所有 tracked 文件。
-- 计算与 `main` 分支的差异。
-- 清理 Preview Workspace (即 Base Workspace)。
-- 在 Preview Workspace 创建/重置 `workspace-lulu/preview` 分支。
-- 应用差异文件，实现精确同步。
-- 启动 Live Preview，实时监听文件变化并同步。
+- **自动检测**：自动识别当前所在的 workspace（例如 `workspace-momo`）。
+- **精确同步**：
+  - 自动 add tracked 文件。
+  - 计算与 main 分支 diff。
+  - 清理 preview workspace。
+  - 切换/重置 preview branch `preview`（单一分支，防止冗余）。
+  - 应用 diff，同步文件。
+- **Live Preview**：启动 live preview，监听文件变化。
+  - 输出变动信息：`[CREATED]`, `[UPDATED]`, `[DELETED]`（带颜色高亮）。
+- **并发控制**：防止同时运行多个 preview 实例。
 
-#### 场景 4：在 Workspace 子目录执行 Preview
+### 场景 4：在 workspace 子目录执行 preview
 
-**命令**（例如在 `workspace-momo/main-web-ui/src`）：
+**命令**（例如在 `workspace-momo/frontend/src`）：
 
 ```bash
-cd ./workspace-momo/main-web-ui/src
-workspace preview
+workspace-cli preview
 ```
 
 **结果**：
 
-- CLI 自动向上查找 workspace 根目录（`workspace-momo`）。
-- 执行与场景 3 相同的同步逻辑。
-- 启动 Live Preview。
+- 自动向上查找 workspace 根目录 → `workspace-momo`。
+- 执行 preview 同步逻辑。
 
-#### 场景 5：切换 Live Preview 到另一个 Workspace
+### 场景 5：一次性同步（非 Live 模式）
+
+**命令**：
+
+```bash
+workspace-cli preview --once
+```
+
+**结果**：
+
+- 执行一次同步后立即退出，不启动文件监听。
+- 适用于 CI/CD 或快速检查。
+
+### 场景 6：调试与日志
+
+**命令**：
+
+```bash
+workspace-cli preview --debug --log-file workspace.log
+```
+
+**结果**：
+
+- 开启调试模式，打印详细信息。
+- 将日志输出到 `workspace.log`。
+
+#### 场景 7：切换 Live Preview 到另一个 Workspace
 
 **命令**：
 
