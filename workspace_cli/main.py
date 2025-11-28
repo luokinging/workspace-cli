@@ -7,6 +7,19 @@ from workspace_cli.core import sync as sync_core
 
 app = typer.Typer()
 
+@app.callback()
+def main(
+    debug: bool = typer.Option(False, "--debug", help="Enable debug mode"),
+    log_file: Path = typer.Option(None, "--log-file", help="Path to log file")
+):
+    """
+    Workspace CLI
+    """
+    from workspace_cli.utils.logger import setup_logging
+    # If log_file is not provided, maybe check config or default to workspace-cli.log in root?
+    # For now, let's just use what is passed.
+    setup_logging(debug, log_file)
+
 @app.command()
 def create(
     name: str,
@@ -47,13 +60,6 @@ def create(
                 repos=repos
             )
             
-            # Save to workspace.json in the parent of base_path (Work Root)
-            # Or current directory? 
-            # Requirement: "create automatically creates config file"
-            # Let's save it in the current directory if we are running from root, 
-            # or maybe better: save it where load_config looks for it.
-            # load_config looks in CWD and parents.
-            # Let's save to CWD/workspace.json for simplicity and predictability.
             save_path = Path.cwd() / "workspace.json"
             save_config(config, save_path)
             typer.echo(f"Created config at {save_path}")
@@ -100,7 +106,10 @@ def status():
         raise typer.Exit(code=1)
 
 @app.command()
-def preview(workspace: str = typer.Option(None, help="Target workspace name")):
+def preview(
+    workspace: str = typer.Option(None, help="Target workspace name"),
+    once: bool = typer.Option(False, "--once", help="Run sync once and exit (no live watch)")
+):
     """
     Start preview sync.
 
@@ -116,13 +125,30 @@ def preview(workspace: str = typer.Option(None, help="Target workspace name")):
     """
     try:
         config = load_config()
-        # If workspace is not provided, try to infer from current directory
+        
+        # Auto-detection logic
         if not workspace:
-            # TODO: Infer logic
-            typer.echo("Please specify --workspace")
-            raise typer.Exit(code=1)
+            cwd = Path.cwd()
+            base_name = config.base_path.name
             
-        sync_core.start_preview(workspace, config)
+            # Check if we are in a workspace dir: {base_name}-{name}
+            # Or if we are in a repo subdir
+            
+            current_workspace_path = None
+            # Check parents up to root
+            for parent in [cwd] + list(cwd.parents):
+                if parent.name.startswith(f"{base_name}-") and parent.parent == config.base_path.parent:
+                    current_workspace_path = parent
+                    break
+            
+            if current_workspace_path:
+                workspace = current_workspace_path.name[len(base_name)+1:]
+                typer.echo(f"Auto-detected workspace: {workspace}")
+            else:
+                typer.echo("Could not auto-detect workspace. Please specify --workspace or run from within a workspace.")
+                raise typer.Exit(code=1)
+            
+        sync_core.start_preview(workspace, config, once=once)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
