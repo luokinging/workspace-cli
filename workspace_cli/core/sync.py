@@ -1,6 +1,9 @@
 import shutil
 import time
 import subprocess
+import os
+import signal
+import typer
 from pathlib import Path
 from typing import List
 from workspace_cli.models import WorkspaceConfig, RepoConfig
@@ -11,98 +14,122 @@ from workspace_cli.utils.git import (
 class SyncError(Exception):
     pass
 
+def _get_pid_file(config: WorkspaceConfig) -> Path:
+    return config.base_path.parent / ".workspace_preview.pid"
+
+def _check_pid_file(pid_file: Path):
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            # Check if process exists
+            os.kill(pid, 0)
+            typer.secho(f"Warning: Another preview process (PID {pid}) might be running.", fg=typer.colors.YELLOW)
+            typer.secho("Please stop it before starting a new one, or remove the PID file if it's stale.", fg=typer.colors.YELLOW)
+            # We could exit here, or just warn. User said "previous one didn't stop".
+            # Let's try to kill it? No, that's dangerous.
+            # Let's just warn for now, or maybe fail?
+            # User said "workspace file accumulation problem".
+            # If we run two previews, they might fight over the same branch.
+            raise SyncError(f"Preview already running (PID {pid}). Please stop it first.")
+        except ProcessLookupError:
+            # Stale PID file
+            pid_file.unlink()
+        except ValueError:
+            # Corrupt PID file
+            pid_file.unlink()
+
+def _create_pid_file(pid_file: Path):
+    pid_file.write_text(str(os.getpid()))
+
+def _remove_pid_file(pid_file: Path):
+    if pid_file.exists():
+        pid_file.unlink()
+
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     """Initialize preview workspace."""
-    print(f"Initializing preview for workspace: {workspace_name}")
+    typer.secho(f"Initializing preview for workspace: {workspace_name}", fg=typer.colors.BLUE)
     
-    # 1. Identify Source and Preview Workspaces
-    # Source: The workspace we are syncing FROM (workspace_name)
-    # Preview: The base workspace (config.base_path) acting as the preview environment?
-    # Wait, the design says: "将 `workspace-lulu` 内容同步到 preview workspace。"
-    # And "Preview workspace" usually implies a dedicated place or the main workspace.
-    # Let's assume:
-    # Source: The feature workspace (e.g. workspace-lulu)
-    # Target (Preview): The base workspace (e.g. main-web-ui) OR a specific preview workspace.
-    # The design says: "显示 preview workspace preview branch"
-    # And "将 Source 侧的变更文件复制过来"
-    
-    # Let's assume the Target is the `config.base_path` (the root workspace).
-    # And we are syncing FROM `workspace_name` TO `base_path`.
-    
-    source_workspace_path = config.base_path.parent / f"{config.base_path.name}-{workspace_name}"
-    target_workspace_path = config.base_path
-    
-    if not source_workspace_path.exists():
-        raise SyncError(f"Source workspace not found: {source_workspace_path}")
+    pid_file = _get_pid_file(config)
+    _check_pid_file(pid_file)
+    _create_pid_file(pid_file)
+
+    try:
+        # 1. Identify Source and Preview Workspaces
+        source_workspace_path = config.base_path.parent / f"{config.base_path.name}-{workspace_name}"
+        target_workspace_path = config.base_path
         
-    print(f"Source: {source_workspace_path}")
-    print(f"Target: {target_workspace_path}")
-    
-    # 2. Iterate over repos
-    for repo in config.repos:
-        source_repo_path = source_workspace_path / repo.path
-        target_repo_path = target_workspace_path / repo.path
-        
-        if not source_repo_path.exists():
-            print(f"Skipping {repo.name}: Source not found.")
-            continue
+        if not source_workspace_path.exists():
+            raise SyncError(f"Source workspace not found: {source_workspace_path}")
             
-        print(f"Syncing repo: {repo.name}")
+        print(f"Source: {source_workspace_path}")
+        print(f"Target: {target_workspace_path}")
         
-        # 2.1 Source Side: Get changed files
-        # We need to see what changed in the source workspace compared to main?
-        # Or just take whatever is currently there?
-        # Design: "git add -u", "git diff --name-only main"
-        
-        try:
-            # Ensure we are tracking all changes
-            run_git_cmd(["add", "-u"], source_repo_path)
+        # 2. Iterate over repos
+        for repo in config.repos:
+            source_repo_path = source_workspace_path / repo.path
+            target_repo_path = target_workspace_path / repo.path
             
-            # Get changed files relative to main
-            # Assuming 'main' is the base branch. 
-            # We might need to fetch main first?
-            # Let's assume main is available.
-            changed_files = get_diff_files(source_repo_path, "main")
-            
-            if not changed_files:
-                print(f"  No changes in {repo.name}")
+            if not source_repo_path.exists():
+                print(f"Skipping {repo.name}: Source not found.")
                 continue
                 
-            print(f"  Found {len(changed_files)} changed files.")
+            print(f"Syncing repo: {repo.name}")
             
-            # 2.2 Target Side: Prepare Preview Branch
-            # Checkout main first to be clean
-            run_git_cmd(["checkout", "main"], target_repo_path)
-            
-            # Create/Reset preview branch
-            preview_branch = f"workspace-{workspace_name}/preview"
-            checkout_new_branch(target_repo_path, preview_branch, force=True)
-            
-            # Clean target
-            # git clean -fd
-            run_git_cmd(["clean", "-fd"], target_repo_path)
-            # git restore .
-            run_git_cmd(["restore", "."], target_repo_path)
-            
-            # 2.3 Copy Files
-            for file_rel_path in changed_files:
-                src_file = source_repo_path / file_rel_path
-                dst_file = target_repo_path / file_rel_path
+            try:
+                # 2.1 Source Side: Get changed files
+                run_git_cmd(["add", "-u"], source_repo_path)
+                changed_files = get_diff_files(source_repo_path, "main")
                 
-                if src_file.exists():
-                    # Copy file
-                    dst_file.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_file, dst_file)
-                    print(f"    Copied: {file_rel_path}")
-                else:
-                    # File deleted in source?
-                    if dst_file.exists():
-                        dst_file.unlink()
-                        print(f"    Deleted: {file_rel_path}")
-                        
-        except GitError as e:
-            print(f"  Git Error in {repo.name}: {e}")
-            raise SyncError(f"Sync failed for {repo.name}")
+                # 2.2 Target Side: Prepare Preview Branch
+                # Always use 'preview' branch
+                preview_branch = "preview"
+                
+                # Checkout main first to be clean (if needed, or just force checkout preview)
+                # If we are already on preview, we might want to reset it?
+                # Let's try to checkout main then delete preview then create preview?
+                # Or just force create/reset preview.
+                
+                # If we are on preview branch, we can't delete it.
+                # So checkout main first.
+                try:
+                    run_git_cmd(["checkout", "main"], target_repo_path)
+                except GitError:
+                    pass # Maybe main doesn't exist?
+                
+                checkout_new_branch(target_repo_path, preview_branch, force=True)
+                
+                # Clean target
+                run_git_cmd(["clean", "-fd"], target_repo_path)
+                run_git_cmd(["restore", "."], target_repo_path)
+                
+                if not changed_files:
+                    print(f"  No changes in {repo.name}")
+                    continue
+                    
+                print(f"  Found {len(changed_files)} changed files.")
+                
+                # 2.3 Copy Files
+                for file_rel_path in changed_files:
+                    src_file = source_repo_path / file_rel_path
+                    dst_file = target_repo_path / file_rel_path
+                    
+                    if src_file.exists():
+                        # Copy file
+                        dst_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_file, dst_file)
+                        typer.secho(f"    Copied: {file_rel_path}", fg=typer.colors.GREEN)
+                    else:
+                        # File deleted in source?
+                        if dst_file.exists():
+                            dst_file.unlink()
+                            typer.secho(f"    Deleted: {file_rel_path}", fg=typer.colors.RED)
+                            
+            except GitError as e:
+                print(f"  Git Error in {repo.name}: {e}")
+                raise SyncError(f"Sync failed for {repo.name}")
+    except Exception:
+        _remove_pid_file(pid_file)
+        raise
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -114,18 +141,9 @@ class Watcher(FileSystemEventHandler):
         self.repo_path = repo_path # Relative path of repo in workspace
 
     def _is_ignored(self, path: str) -> bool:
-        # Check if file is ignored by git
-        # We need to run git check-ignore in the source repo
         try:
-            # path is absolute, we need relative to source repo root
-            # source_repo_root = self.source_root / self.repo_path
-            # But wait, the observer is watching the source_repo_root?
-            # Let's assume we set up one observer per repo.
-            
             cwd = self.source_root / self.repo_path
             rel_path = Path(path).relative_to(cwd)
-            
-            # git check-ignore -q <path> returns 0 if ignored, 1 if not
             subprocess.run(
                 ["git", "check-ignore", "-q", str(rel_path)],
                 cwd=str(cwd),
@@ -135,11 +153,9 @@ class Watcher(FileSystemEventHandler):
         except subprocess.CalledProcessError:
             return False
         except Exception:
-            # If relative_to fails (shouldn't happen if logic is correct), assume not ignored?
             return False
 
-    def _sync_file(self, src_path: str):
-        # Calculate target path
+    def _sync_file(self, src_path: str, event_type: str = "UPDATED"):
         try:
             rel_path = Path(src_path).relative_to(self.source_root / self.repo_path)
             dst_path = self.target_root / self.repo_path / rel_path
@@ -147,42 +163,54 @@ class Watcher(FileSystemEventHandler):
             if self._is_ignored(src_path):
                 return
 
-            print(f"Syncing: {rel_path}")
+            color = typer.colors.WHITE
+            if event_type == "CREATED":
+                color = typer.colors.GREEN
+            elif event_type == "DELETED":
+                color = typer.colors.RED
+            elif event_type == "UPDATED":
+                color = typer.colors.YELLOW
+
             if Path(src_path).exists():
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_path, dst_path)
+                typer.secho(f"[{event_type}] {rel_path}", fg=color)
             else:
                 if dst_path.exists():
                     dst_path.unlink()
+                    typer.secho(f"[{event_type}] {rel_path}", fg=color)
         except Exception as e:
             print(f"Error syncing {src_path}: {e}")
 
     def on_modified(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path)
+            self._sync_file(event.src_path, "UPDATED")
 
     def on_created(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path)
+            self._sync_file(event.src_path, "CREATED")
 
     def on_deleted(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path)
+            self._sync_file(event.src_path, "DELETED")
             
     def on_moved(self, event):
         if not event.is_directory:
-            # Handle move as delete + create
-            # Or just sync dest
-            self._sync_file(event.dest_path)
-            # And delete src?
-            # _sync_file handles deletion if src doesn't exist, 
-            # but here src_path is the OLD path.
-            # So we should sync both.
-            self._sync_file(event.src_path)
+            self._sync_file(event.src_path, "DELETED")
+            self._sync_file(event.dest_path, "CREATED")
 
-def start_preview(workspace_name: str, config: WorkspaceConfig) -> None:
+def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = False) -> None:
     """Start preview sync and watch."""
-    init_preview(workspace_name, config)
+    try:
+        init_preview(workspace_name, config)
+    except SyncError as e:
+        typer.secho(str(e), err=True, fg=typer.colors.RED)
+        return
+
+    if once:
+        typer.secho("Preview sync completed (once mode).", fg=typer.colors.GREEN)
+        _remove_pid_file(_get_pid_file(config))
+        return
     
     source_workspace_path = config.base_path.parent / f"{config.base_path.name}-{workspace_name}"
     target_workspace_path = config.base_path
@@ -213,6 +241,8 @@ def start_preview(workspace_name: str, config: WorkspaceConfig) -> None:
             o.stop()
         for o in observers:
             o.join()
+    finally:
+        _remove_pid_file(_get_pid_file(config))
 
 def sync_rules(config: WorkspaceConfig) -> None:
     """Sync rules repo."""
