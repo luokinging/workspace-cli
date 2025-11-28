@@ -44,20 +44,8 @@ def create_workspace(name: str, config: WorkspaceConfig) -> None:
             raise WorkspaceError(f"Failed to create worktree for {repo.name}: {e}")
 
     print(f"Workspace '{name}' created successfully at {workspace_path}")
-
-    # 3. Switch base repos to preview branch
-    # User requirement: "把 --base 目录下的repo设置成 preview分支"
-    print("Switching base repositories to preview branch...")
-    
-    for repo in config.repos:
-        source_repo_path = config.base_path / repo.path
-        if source_repo_path.exists():
-            preview_branch = f"workspace-{name}/preview"
-            try:
-                print(f"Switching {repo.name} to {preview_branch}...")
-                checkout_new_branch(source_repo_path, preview_branch, force=True)
-            except GitError as e:
-                print(f"Warning: Failed to switch {repo.name} to preview branch: {e}")
+    # We do not switch base repos to preview branch here anymore.
+    # The preview command will handle that when needed.
 
 def delete_workspace(name: str, config: WorkspaceConfig) -> None:
     """Delete a workspace."""
