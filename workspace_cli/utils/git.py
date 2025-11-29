@@ -1,6 +1,6 @@
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 class GitError(Exception):
     pass
@@ -96,3 +96,49 @@ def checkout_new_branch(repo_path: Path, branch: str, force: bool = True) -> Non
 def clone_repo(url: str, path: Path) -> None:
     """Clone a repository."""
     subprocess.run(["git", "clone", url, str(path)], check=True)
+
+# --- New Functions for Refactor ---
+
+def get_merge_base(repo_path: Path, commit_a: str, commit_b: str) -> str:
+    """Find the common ancestor commit of two commits."""
+    return run_git_cmd(["merge-base", commit_a, commit_b], repo_path)
+
+def submodule_update(repo_path: Path, init: bool = True, recursive: bool = True) -> None:
+    """Update submodules."""
+    cmd = ["submodule", "update"]
+    if init:
+        cmd.append("--init")
+    if recursive:
+        cmd.append("--recursive")
+    run_git_cmd(cmd, repo_path)
+
+def get_submodule_status(repo_path: Path) -> Dict[str, str]:
+    """
+    Get status of submodules.
+    Returns a dict mapping submodule path to current commit hash.
+    """
+    # git submodule status output format:
+    # -<sha1> <path> (<describe>)
+    # +<sha1> <path> (<describe>)
+    #  <sha1> <path> (<describe>)
+    output = run_git_cmd(["submodule", "status"], repo_path)
+    result = {}
+    for line in output.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 2:
+            sha = parts[0].lstrip("-+U") # Remove status indicators
+            path = parts[1]
+            result[path] = sha
+    return result
+
+def fetch_remote(repo_path: Path, remote: str = "origin") -> None:
+    """Fetch updates from remote."""
+    run_git_cmd(["fetch", remote], repo_path)
+
+def merge_branch(repo_path: Path, source_branch: str) -> None:
+    """Merge source branch into current branch."""
+    run_git_cmd(["merge", source_branch], repo_path)
+
+def get_commit_hash(repo_path: Path, ref: str = "HEAD") -> str:
+    """Get full commit hash for a reference."""
+    return run_git_cmd(["rev-parse", ref], repo_path)
