@@ -16,7 +16,7 @@ setup(
     # author_email="", # User didn't provide email, skipping or using dummy? Best to skip if unknown.
     packages=find_packages(),
     install_requires=[
-        "typer[all]",
+        "typer",
         "pydantic",
         "watchdog",
     ],

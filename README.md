@@ -79,7 +79,6 @@ workspace sync
 
 - **Base Workspace**: Pulls `origin/main`.
 - **Sibling Workspaces**: Merges `origin/main` into their current branch and updates submodules.
-- **Expansion**: If `workspace_expand_folder` is configured, contents from that folder in the Base Workspace are expanded to all workspaces.
 
 ### 4. Live Preview
 
@@ -113,16 +112,14 @@ workspace preview
 ```json
 {
   "base_path": "/absolute/path/to/base/workspace",
-  "repos": [],
-  "workspace_expand_folder": "expand"
+  "repos": []
 }
 ```
 
-| Field                     | Type   | Description                                                                                                            |
-| :------------------------ | :----- | :--------------------------------------------------------------------------------------------------------------------- |
-| `base_path`               | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this.                                     |
-| `repos`                   | List   | (Optional) List of managed repositories. Mostly auto-discovered from submodules now.                                   |
-| `workspace_expand_folder` | String | (Optional) Path to a folder in Base Workspace. Its contents will be expanded (copied) to all workspaces during `sync`. |
+| Field       | Type   | Description                                                                          |
+| :---------- | :----- | :----------------------------------------------------------------------------------- |
+| `base_path` | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this.   |
+| `repos`     | List   | (Optional) List of managed repositories. Mostly auto-discovered from submodules now. |
 
 ## 🏗️ Architecture
 

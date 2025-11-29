@@ -53,7 +53,6 @@
 2.  **执行 Sync**:
     - 在 `base-workspace-feature-a` 中执行: `workspace-cli sync`。
 3.  **验证**:
-    - **Base Workspace**: `main` 分支已更新，`backend` 子模块指向新 Commit。
     - **Feature Workspace**: `stand` 分支已 Merge `main` 的变更，`backend` 子模块指向新 Commit。
 
 ### Case 4: Preview 初始化与同步
