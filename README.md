@@ -117,14 +117,18 @@ workspace preview
 ```json
 {
   "base_path": "/absolute/path/to/base/workspace",
-  "repos": []
+  "workspaces": {
+    "feature-a": {
+      "path": "../base-workspace-feature-a"
+    }
+  }
 }
 ```
 
-| Field       | Type   | Description                                                                          |
-| :---------- | :----- | :----------------------------------------------------------------------------------- |
-| `base_path` | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this.   |
-| `repos`     | List   | (Optional) List of managed repositories. Mostly auto-discovered from submodules now. |
+| Field        | Type   | Description                                                                        |
+| :----------- | :----- | :--------------------------------------------------------------------------------- |
+| `base_path`  | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this. |
+| `workspaces` | Map    | Map of created workspaces (Name -> Path). Managed automatically by CLI.            |
 
 ## 🏗️ Architecture
 
