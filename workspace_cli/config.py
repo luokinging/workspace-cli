@@ -1,6 +1,34 @@
 import json
+import configparser
 from pathlib import Path
-from workspace_cli.models import WorkspaceConfig, RepoConfig
+from typing import List
+from workspace_cli.models import WorkspaceConfig, RepoConfig, WorkspaceEntry
+
+def get_managed_repos(base_path: Path) -> List[RepoConfig]:
+    """
+    Parse .gitmodules in base_path to get list of managed repos.
+    """
+    gitmodules_path = base_path / ".gitmodules"
+    repos = []
+    
+    if not gitmodules_path.exists():
+        return repos
+
+    config = configparser.ConfigParser()
+    config.read(gitmodules_path)
+    
+    for section in config.sections():
+        # Section format: submodule "path/to/module"
+        if section.startswith('submodule "'):
+            path_str = config[section].get("path")
+            url = config[section].get("url")
+            if path_str:
+                repos.append(RepoConfig(
+                    name=Path(path_str).name,
+                    path=Path(path_str),
+                    url=url
+                ))
+    return repos
 
 def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
     """Load workspace configuration from JSON file."""
@@ -27,27 +55,24 @@ def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
     else:
         base_path = Path(base_path_raw).resolve()
     
-    repos = []
-    for r in data.get("repos", []):
-        if isinstance(r, str):
-            # Simple string format, assume path=name
-            repos.append(RepoConfig(name=r, path=Path(r)))
-        else:
-            repos.append(RepoConfig(**r))
-            
+    # Parse workspaces
+    workspaces = {}
+    for name, entry in data.get("workspaces", {}).items():
+        workspaces[name] = WorkspaceEntry(**entry)
+
     return WorkspaceConfig(
         base_path=base_path,
-        repos=repos
+        workspaces=workspaces
     )
 
 def save_config(config: WorkspaceConfig, path: Path) -> None:
     """Save workspace configuration to JSON file."""
     data = {
         "base_path": str(config.base_path),
-        "repos": [
-            {"name": r.name, "path": str(r.path), "url": r.url}
-            for r in config.repos
-        ]
+        "workspaces": {
+            name: entry.model_dump() 
+            for name, entry in config.workspaces.items()
+        }
     }
     
     with open(path, "w") as f:

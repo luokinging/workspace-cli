@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Dict, Optional
 from pathlib import Path
 
 class RepoConfig(BaseModel):
@@ -7,10 +7,12 @@ class RepoConfig(BaseModel):
     path: Path  # Relative path to workspace root
     url: Optional[str] = None
 
+class WorkspaceEntry(BaseModel):
+    path: str  # Relative or absolute path
+
 class WorkspaceConfig(BaseModel):
     base_path: Path
-    repos: List[RepoConfig]
-    repos: List[RepoConfig]
+    workspaces: Dict[str, WorkspaceEntry] = {}
 
 class Context(BaseModel):
     root_path: Path

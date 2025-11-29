@@ -57,27 +57,9 @@ def create(
             
             # Assume base path is absolute or relative to CWD
             base_path = base.resolve()
-            # In new architecture, we don't need to specify repos manually.
-            # They are defined by git submodules in the base path.
-            # But WorkspaceConfig model might still expect a list.
-            # We can auto-discover them or just leave it empty for now and let core handle it?
-            # Core uses config.repos to iterate.
-            # So we SHOULD discover them.
-            
-            # Auto-discover submodules from .gitmodules
-            # This requires parsing .gitmodules or using git command.
-            # Let's use git command.
-            from workspace_cli.utils.git import get_submodule_status
-            try:
-                submodules = get_submodule_status(base_path)
-                repos = [RepoConfig(name=Path(p).name, path=Path(p)) for p in submodules.keys()]
-            except Exception:
-                # Fallback or empty?
-                repos = []
-
             config = WorkspaceConfig(
                 base_path=base_path,
-                repos=repos
+                workspaces={}
             )
             
             save_path = Path.cwd() / "workspace.json"
@@ -151,24 +133,25 @@ def preview(
         
         # Auto-detection logic
         if not workspace:
-            cwd = Path.cwd()
-            base_name = config.base_path.name
-            
-            # Check if we are in a workspace dir: {base_name}-{name}
-            # Or if we are in a repo subdir
-            
-            current_workspace_path = None
-            # Check parents up to root
-            for parent in [cwd] + list(cwd.parents):
-                if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
-                    current_workspace_path = parent
+            # Check if we are in a known workspace from config
+            current_workspace_name = None
+            for name, entry in config.workspaces.items():
+                # Resolve path
+                if not Path(entry.path).is_absolute():
+                    ws_path = (config.base_path / entry.path).resolve()
+                else:
+                    ws_path = Path(entry.path).resolve()
+                
+                # Check if cwd is inside ws_path
+                try:
+                    cwd.relative_to(ws_path)
+                    current_workspace_name = name
                     break
+                except ValueError:
+                    continue
             
-            if current_workspace_path:
-                if current_workspace_path.name == base_name:
-                     typer.echo("You are in the Base Workspace. Please specify a target workspace to preview.")
-                     raise typer.Exit(code=1)
-                workspace = current_workspace_path.name[len(base_name)+1:]
+            if current_workspace_name:
+                workspace = current_workspace_name
                 typer.echo(f"Auto-detected workspace: {workspace}")
             else:
                 typer.echo("Could not auto-detect workspace. Please specify --workspace or run from within a workspace.")

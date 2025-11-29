@@ -11,6 +11,7 @@ from workspace_cli.utils.git import (
     run_git_cmd, get_diff_files, checkout_new_branch, GitError, get_current_branch,
     get_merge_base, submodule_update, fetch_remote, merge_branch, get_commit_hash
 )
+from workspace_cli.config import get_managed_repos
 
 class SyncError(Exception):
     pass
@@ -90,7 +91,17 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
 
     try:
         # 1. Identify Source and Preview Workspaces
-        source_workspace_path = config.base_path.parent / f"{config.base_path.name}-{workspace_name}"
+        if workspace_name not in config.workspaces:
+             raise SyncError(f"Workspace '{workspace_name}' not found in config.")
+             
+        # Resolve path from config
+        ws_entry = config.workspaces[workspace_name]
+        # Handle relative path
+        if not Path(ws_entry.path).is_absolute():
+            source_workspace_path = (config.base_path / ws_entry.path).resolve()
+        else:
+            source_workspace_path = Path(ws_entry.path).resolve()
+
         target_workspace_path = config.base_path
         
         if not source_workspace_path.exists():
@@ -126,7 +137,8 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
              raise SyncError(f"Sync failed for Root Workspace: {e}")
 
         # 2. Iterate over repos (submodules)
-        for repo in config.repos:
+        repos = get_managed_repos(config.base_path)
+        for repo in repos:
             source_repo_path = source_workspace_path / repo.path
             target_repo_path = target_workspace_path / repo.path
             
@@ -307,14 +319,24 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
         _remove_pid_file(_get_pid_file(config))
         return
     
-    source_workspace_path = config.base_path.parent / f"{config.base_path.name}-{workspace_name}"
+    if workspace_name not in config.workspaces:
+        typer.secho(f"Workspace '{workspace_name}' not found in config.", err=True, fg=typer.colors.RED)
+        return
+
+    ws_entry = config.workspaces[workspace_name]
+    if not Path(ws_entry.path).is_absolute():
+        source_workspace_path = (config.base_path / ws_entry.path).resolve()
+    else:
+        source_workspace_path = Path(ws_entry.path).resolve()
+
     target_workspace_path = config.base_path
     
     observers = []
     
     print("Starting watchers...")
     
-    for repo in config.repos:
+    repos = get_managed_repos(config.base_path)
+    for repo in repos:
         source_repo_path = source_workspace_path / repo.path
         
         if not source_repo_path.exists():
@@ -423,21 +445,29 @@ def sync_workspaces(config: WorkspaceConfig, sync_all: bool = False) -> None:
     parent_dir = base_path.parent
     
     print("Syncing Sibling Workspaces...")
-    for path in parent_dir.iterdir():
-        if path.is_dir() and path.name.startswith(f"{base_name}-") and path.name != base_name:
-            ws_name = path.name[len(base_name)+1:]
-            print(f"  Syncing {ws_name}...")
+    for name, entry in config.workspaces.items():
+        # Resolve path
+        if not Path(entry.path).is_absolute():
+            path = (config.base_path / entry.path).resolve()
+        else:
+            path = Path(entry.path).resolve()
             
-            try:
-                # Merge origin/main
-                # Note: We are merging origin/main into the current branch (stand)
-                print(f"    Merging origin/main...")
-                fetch_remote(path)
-                merge_branch(path, "origin/main")
-                
-                # Update submodules
-                print(f"    Updating submodules...")
-                submodule_update(path)
-                
-            except GitError as e:
-                print(f"    Failed to sync {ws_name}: {e}")
+        if not path.exists():
+            print(f"  Skipping {name}: Path not found ({path})")
+            continue
+            
+        print(f"  Syncing {name}...")
+            
+        try:
+            # Merge origin/main
+            # Note: We are merging origin/main into the current branch (stand)
+            print(f"    Merging origin/main...")
+            fetch_remote(path)
+            merge_branch(path, "origin/main")
+            
+            # Update submodules
+            print(f"    Updating submodules...")
+            submodule_update(path)
+            
+        except GitError as e:
+            print(f"    Failed to sync {ws_name}: {e}")
