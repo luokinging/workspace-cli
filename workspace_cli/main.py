@@ -24,20 +24,23 @@ def main(
 
 @app.command()
 def create(
-    name: str,
+    names: List[str] = typer.Argument(..., help="List of workspace names to create"),
     base: Path = typer.Option(None, help="Path to base workspace (required if config missing)"),
 ):
     """
-    Create a new workspace.
+    Create new workspace(s).
 
     If a configuration file (workspace.json) does not exist, you must provide --base to create one.
     
     Examples:
     
-    # Create a new workspace using existing config
+    # Create a single workspace
     $ workspace create feature-a
     
-    # Create a new workspace and generate config (first run)
+    # Create multiple workspaces
+    $ workspace create feature-a feature-b feature-c
+    
+    # Create with base path (first run)
     $ workspace create feature-a --base /path/to/base
     """
     try:
@@ -81,7 +84,10 @@ def create(
             save_config(config, save_path)
             typer.echo(f"Created config at {save_path}")
 
-        workspace_core.create_workspace(name, config)
+            typer.echo(f"Created config at {save_path}")
+
+        for name in names:
+            workspace_core.create_workspace(name, config)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)

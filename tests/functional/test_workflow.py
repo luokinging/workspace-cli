@@ -46,6 +46,16 @@ def test_create_and_delete_workspace(base_workspace, run_cli):
     # Verify dir gone
     assert not ws_path.exists()
 
+def test_create_multiple_workspaces(base_workspace, run_cli):
+    """Test creating multiple workspaces at once."""
+    result = run_cli(["create", "ws1", "ws2", "ws3", "--base", str(base_workspace)])
+    assert result.returncode == 0, f"Create failed: {result.stderr}"
+    
+    for name in ["ws1", "ws2", "ws3"]:
+        ws_path = base_workspace.parent / f"base-ws-{name}"
+        assert ws_path.exists()
+        assert (ws_path / ".git").is_file()
+
 def test_create_duplicate_fails(base_workspace, run_cli):
     run_cli(["create", "test1", "--base", str(base_workspace)])
     result = run_cli(["create", "test1", "--base", str(base_workspace)])

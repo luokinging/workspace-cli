@@ -110,7 +110,18 @@ def submodule_update(repo_path: Path, init: bool = True, recursive: bool = True)
         cmd.append("--init")
     if recursive:
         cmd.append("--recursive")
-    run_git_cmd(cmd, repo_path)
+    cmd.append("--recursive")
+    
+    # We want to stream output for submodules as it can be slow
+    print(f"Running: git {' '.join(cmd)}")
+    try:
+        subprocess.run(
+            ["git"] + cmd,
+            cwd=str(repo_path),
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        raise GitError(f"Git submodule update failed: {e}")
 
 def get_submodule_status(repo_path: Path) -> Dict[str, str]:
     """

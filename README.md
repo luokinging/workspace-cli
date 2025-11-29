@@ -49,11 +49,14 @@ Use the `create` command to create a new development Workspace (Worktree) based 
 
 ```bash
 # Syntax
-workspace create <new_name> [--base <base_path>]
+workspace create <new_name>... [--base <base_path>]
 
 # Example: Create a feature workspace
 # Run this from within the Base Workspace or specify --base
 workspace create feature-a
+
+# Example: Create multiple workspaces
+workspace create feature-a feature-b feature-c
 ```
 
 **Result**:
@@ -144,3 +147,8 @@ workspace preview
     - Identifies Common Root between Feature and Base submodules.
     - Resets Base submodules to Common Root (on `preview` branch).
     - Copies modified files from Feature to Base.
+    - **Note**: If you switch branches in the Feature Workspace during preview, files _will_ be synced, but the Git history (HEAD) in the Preview Workspace will remain at the initial Common Root. For best results, restart `preview` after switching branches.
+
+```
+
+```
