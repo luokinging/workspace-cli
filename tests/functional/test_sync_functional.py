@@ -53,7 +53,7 @@ def test_sync_command(base_workspace, run_cli):
     import json
     config = {
         "base_path": str(base_workspace),
-        "repos": [] 
+        "workspaces": {"feature1": {"path": "base-ws-feature1"}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
@@ -119,7 +119,7 @@ def test_sync_all_command(base_workspace, run_cli):
     import json
     config = {
         "base_path": str(base_workspace),
-        "repos": [] 
+        "workspaces": {"feature2": {"path": "base-ws-feature2"}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)

@@ -4,15 +4,18 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from workspace_cli.main import app
-from workspace_cli.models import WorkspaceConfig, RepoConfig
+from workspace_cli.models import WorkspaceConfig, WorkspaceEntry
 from workspace_cli.config import save_config, load_config
 
 runner = CliRunner()
 
+from workspace_cli.models import WorkspaceConfig, WorkspaceEntry
+
 def test_save_config(tmp_path):
+    entry = WorkspaceEntry(path="feature-a")
     config = WorkspaceConfig(
         base_path=Path("/tmp/base"),
-        repos=[RepoConfig(name="repo1", path=Path("repo1"))]
+        workspaces={"feature-a": entry}
     )
     config_path = tmp_path / "workspace.json"
     save_config(config, config_path)
@@ -21,7 +24,7 @@ def test_save_config(tmp_path):
     with open(config_path) as f:
         data = json.load(f)
         assert data["base_path"] == "/tmp/base"
-        assert data["repos"][0]["name"] == "repo1"
+        assert data["workspaces"]["feature-a"]["path"] == "feature-a"
 
 @patch("workspace_cli.utils.git.get_submodule_status")
 @patch("workspace_cli.core.workspace.create_workspace")
@@ -56,7 +59,7 @@ def test_create_command_existing_config(mock_create_workspace, tmp_path):
         with open(config_path, "w") as f:
             json.dump({
                 "base_path": "/tmp/base",
-                "repos": [{"name": "repo1", "path": "repo1"}]
+                "workspaces": {"feature-a": {"path": "feature-a"}}
             }, f)
             
         result = runner.invoke(app, ["create", "test-ws"])

@@ -118,9 +118,7 @@ def test_sync(base_ws, ws_path):
     import json
     config = {
         "base_path": str(base_ws), 
-        "repos": [
-            {"name": "backend", "path": "backend"}
-        ]
+        "workspaces": {"feature-a": {"path": "base-ws-feature-a"}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)

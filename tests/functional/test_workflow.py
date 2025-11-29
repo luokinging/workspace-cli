@@ -19,23 +19,23 @@ def test_create_and_delete_workspace(base_workspace, run_cli):
     assert (submodule_path / "backend.txt").exists()
     
     # 2. Status
-    # We need to create a config for status to work?
-    # Status loads config to find base path.
-    # If we don't have workspace.json, status might fail or we need to pass base?
-    # Status command doesn't take --base.
-    # So we need workspace.json.
-    # Let's create one.
-    import json
-    config = {
-        "base_path": str(base_workspace),
-        "repos": []
-    }
-    with open(base_workspace / "workspace.json", "w") as f:
-        json.dump(config, f)
+    # create command should have created workspace.json in CWD (which is likely base_workspace or temp dir?)
+    # run_cli default cwd?
+    # If run_cli runs in a temp dir, create writes there.
+    # We should run status in the same dir.
+    # Let's assume run_cli uses a consistent cwd if not specified, or we need to know where it is.
+    # In conftest (not seen), usually it's a temp dir.
+    # If we pass cwd=base_workspace to status, we expect workspace.json to be there.
+    # Did create write to base_workspace?
+    # main.py: save_path = Path.cwd() / "workspace.json"
+    # So it depends on where create was run.
+    # In this test: run_cli(["create", ...]) -> uses default cwd.
+    # We should run status in default cwd too.
+    
+    # Remove manual config creation that overwrites the one from create!
         
-    # We need to run status from a place where it can find config.
-    # If we run from base_workspace, it finds it.
-    result = run_cli(["status"], cwd=base_workspace)
+    # Run status in default cwd (where create ran)
+    result = run_cli(["status"])
     assert result.returncode == 0
     assert "test1" in result.stdout
     
