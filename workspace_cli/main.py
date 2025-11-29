@@ -19,6 +19,10 @@ def main(
     # If log_file is not provided, maybe check config or default to workspace-cli.log in root?
     # For now, let's just use what is passed.
     setup_logging(debug, log_file)
+    if debug:
+        from workspace_cli.utils.logger import get_logger
+        logger = get_logger()
+        logger.debug("Debug mode enabled")
 
 @app.command()
 def create(

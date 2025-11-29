@@ -23,14 +23,22 @@ def _check_pid_file(pid_file: Path):
             pid = int(pid_file.read_text().strip())
             # Check if process exists
             os.kill(pid, 0)
-            typer.secho(f"Warning: Another preview process (PID {pid}) might be running.", fg=typer.colors.YELLOW)
-            typer.secho("Please stop it before starting a new one, or remove the PID file if it's stale.", fg=typer.colors.YELLOW)
-            # We could exit here, or just warn. User said "previous one didn't stop".
-            # Let's try to kill it? No, that's dangerous.
-            # Let's just warn for now, or maybe fail?
-            # User said "workspace file accumulation problem".
-            # If we run two previews, they might fight over the same branch.
-            raise SyncError(f"Preview already running (PID {pid}). Please stop it first.")
+            
+            typer.secho(f"Warning: Another preview process (PID {pid}) is running.", fg=typer.colors.YELLOW)
+            typer.secho("Stopping it to start new preview...", fg=typer.colors.YELLOW)
+            
+            try:
+                os.kill(pid, signal.SIGTERM)
+                # Wait for it to exit
+                for _ in range(50):  # Wait up to 5 seconds
+                    time.sleep(0.1)
+                    os.kill(pid, 0)
+                
+                # If still running, force kill
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # Process is gone
+                
         except ProcessLookupError:
             # Stale PID file
             pid_file.unlink()
@@ -43,7 +51,12 @@ def _create_pid_file(pid_file: Path):
 
 def _remove_pid_file(pid_file: Path):
     if pid_file.exists():
-        pid_file.unlink()
+        try:
+            pid = int(pid_file.read_text().strip())
+            if pid == os.getpid():
+                pid_file.unlink()
+        except (ValueError, ProcessLookupError, OSError):
+            pass
 
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     """Initialize preview workspace."""
@@ -77,7 +90,7 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
             
             try:
                 # 2.1 Source Side: Get changed files
-                run_git_cmd(["add", "-u"], source_repo_path)
+                run_git_cmd(["add", "-A"], source_repo_path)
                 changed_files = get_diff_files(source_repo_path, "main")
                 
                 # 2.2 Target Side: Prepare Preview Branch
@@ -232,6 +245,12 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
         observers.append(observer)
         print(f"Watching {repo.name} at {source_repo_path}")
     
+    # Handle SIGTERM to ensure cleanup
+    def handle_sigterm(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
     try:
         while True:
             time.sleep(1)

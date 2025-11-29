@@ -9,6 +9,7 @@
     - 安装 `workspace-cli` (`pip install -e .`)。
     - 确保 `git` 可用。
     - 清理之前的测试数据 (如果存在)。
+    - e2e 测试中，你可以创建额外的测试脚本，但是测试完成要删除
 
 ## 测试用例
 
@@ -67,18 +68,19 @@
     - 验证: CLI 输出 `[DELETED] new_file.txt` (红色)。
     - 验证: `main-repo/new_file.txt` 不存在。
 
-### Case 4: 并发控制与清理
+### Case 4: 并发控制与自动接管
 
-**目标**: 验证系统防止同时运行多个 Preview 实例，并能正确清理 PID 文件。
+**目标**: 验证当启动新的 Preview 时，会自动终止已存在的 Preview 进程，并接管 Preview 环境。
 
 **步骤**:
 
 1.  确保一个 preview 进程正在运行 (Case 3)。
-2.  尝试启动第二个 preview: `workspace-cli preview`。
-    - 验证: 报错提示 "Preview already running" 或类似警告，并退出。
-3.  停止第一个 preview 进程 (Ctrl+C 或 kill)。
+2.  尝试启动第二个 preview: `workspace-cli preview` (可以在另一个 workspace 或同一个 workspace)。
+    - 验证: CLI 提示 "Stopping existing preview process..."。
+    - 验证: 新的 preview 进程成功启动并开始监听。
+    - 验证: 旧的 preview 进程被终止 (可以通过 PID 检查)。
+3.  停止当前的 preview 进程。
     - 验证: `.workspace_preview.pid` 文件被删除。
-4.  再次启动 preview，应该成功。
 
 ### Case 5: 切换 Workspace
 
@@ -100,7 +102,7 @@
 
 **步骤**:
 
-1.  执行: `workspace-cli preview --once --debug --log-file debug.log`。
+1.  执行: `workspace-cli --debug --log-file debug.log preview --once`。
 2.  **验证**:
     - 生成了 `debug.log` 文件。
     - 文件中包含 DEBUG 级别的日志信息。
