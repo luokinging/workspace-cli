@@ -345,29 +345,66 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
     finally:
         _remove_pid_file(_get_pid_file(config))
 
-def sync_workspaces(config: WorkspaceConfig) -> None:
+def sync_workspaces(config: WorkspaceConfig, sync_all: bool = False) -> None:
     """
-    Sync all workspaces.
-    1. Update Base Workspace (pull origin main).
-    2. Update all sibling workspaces (merge origin/main + update submodules).
+    Sync workspaces.
+    
+    If sync_all is False:
+        - Syncs ONLY the current workspace (pull --rebase).
+    
+    If sync_all is True:
+        - Syncs Base Workspace (pull origin main).
+        - Syncs all sibling workspaces (merge origin/main + update submodules).
     """
     base_path = config.base_path
-    # 0. Handle Current Workspace (if we are in one)
     current_ws_path = _get_current_workspace_path(config)
+
+    # 1. Handle Current Workspace Only (Default)
+    if not sync_all:
+        if current_ws_path:
+            print(f"Syncing Current Workspace: {current_ws_path.name}")
+            try:
+                if current_ws_path == base_path:
+                    # Base Workspace
+                    print("  Pulling origin main...")
+                    run_git_cmd(["pull", "origin", "main"], base_path)
+                    print("  Updating submodules...")
+                    submodule_update(base_path)
+                else:
+                    # Feature Workspace
+                    print("  Pulling latest changes (rebase)...")
+                    run_git_cmd(["pull", "--rebase", "origin", "main"], current_ws_path)
+                    # Also update submodules? Yes.
+                    print("  Updating submodules...")
+                    submodule_update(current_ws_path)
+            except GitError as e:
+                print(f"  Error syncing current workspace: {e}")
+        else:
+            print("Not in a known workspace. Use --all to sync all workspaces.")
+        return
+
+    # 2. Handle Sync All
+    # ... existing logic for sync all ...
+    
+    # 0. Handle Current Workspace (if we are in one) - Already handled above? 
+    # No, if sync_all is True, we want to do the full pass.
+    # The full pass iterates everything?
+    # The original logic was:
+    # 1. Update Base
+    # 2. Update Siblings
+    
+    # If we are in a feature workspace, the original logic didn't explicitly pull it unless it was in the loop.
+    # But wait, the original logic DID have a "0. Handle Current Workspace" block.
+    
     if current_ws_path and current_ws_path != base_path:
-        print(f"Detected current workspace: {current_ws_path.name}")
-        try:
+         print(f"Detected current workspace: {current_ws_path.name}")
+         try:
             # Pull --rebase (to get latest main)
             print("  Pulling latest changes (rebase)...")
             run_git_cmd(["pull", "--rebase", "origin", "main"], current_ws_path)
             
-        except GitError as e:
+         except GitError as e:
             print(f"  Error syncing current workspace: {e}")
-            # Should we stop? Probably yes, to avoid overwriting or conflicts later?
-            # But sync_workspaces continues to other siblings.
-            # Let's warn and continue, or return?
-            # If push failed, maybe we shouldn't sync others?
-            # User wants "submit". If submit fails, we should probably stop.
             return
 
     # 1. Update Base

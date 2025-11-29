@@ -180,19 +180,26 @@ def preview(
         raise typer.Exit(code=1)
 
 @app.command()
-def sync():
+def sync(
+    all: bool = typer.Option(False, "--all", help="Sync all workspaces (current + siblings)")
+):
     """
-    Sync all workspaces.
+    Sync workspaces.
 
-    Updates Base Workspace from remote main, and propagates changes to all sibling workspaces.
+    By default, syncs only the current workspace (pulls from origin).
+    Use --all to sync all workspaces (Base + Siblings).
     
     Example:
     
+    # Sync current workspace
     $ workspace sync
+    
+    # Sync all workspaces
+    $ workspace sync --all
     """
     try:
         config = load_config()
-        sync_core.sync_workspaces(config)
+        sync_core.sync_workspaces(config, sync_all=all)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
