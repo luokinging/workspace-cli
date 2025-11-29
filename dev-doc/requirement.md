@@ -79,15 +79,18 @@ PROJECT_ROOT/
 
 ### 4.3. 全局同步 (`sync`)
 
-**命令**: `workspace-cli sync`
+**命令**: `workspace-cli sync [--all]`
 
 **逻辑**:
 
-1.  **更新 Base**: 在 Base Workspace 拉取远程 `main` (`git pull origin main`)。
-2.  **更新所有 Workspaces**:
-    - 遍历所有本地 Workspace (Worktrees)。
-    - **Merge**: 将 `main` 合并到当前 Workspace 的 `stand` 分支。
-    - **Update Submodules**: 执行 `git submodule update --init --recursive`，确保子模块指针更新。
+1.  **默认 (无参数)**:
+    - 仅更新当前 Workspace (`git pull --rebase origin main`)。
+2.  **全局 (`--all`)**:
+    - **更新 Base**: 在 Base Workspace 拉取远程 `main` (`git pull origin main`)。
+    - **更新所有 Workspaces**:
+      - 遍历所有本地 Workspace (Worktrees)。
+      - **Merge**: 将 `main` 合并到当前 Workspace 的 `stand` 分支。
+      - **Update Submodules**: 执行 `git submodule update --init --recursive`，确保子模块指针更新。
 
 ### 4.4. 删除 Workspace (`delete`)
 

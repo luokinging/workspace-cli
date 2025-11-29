@@ -10,7 +10,7 @@ The core goal of this project is to solve the problem of environment isolation a
 
 - **Workspace as Repo**: The top-level Workspace is a Git repository. Child repositories are managed via `.gitmodules`.
 - **Git Worktree Isolation**: Each Workspace is a Git Worktree of the Base Workspace, ensuring efficient storage usage and fast creation.
-- **Unified Sync**: The `sync` command updates the Base Workspace from remote and propagates changes (including submodule pointers) to all sibling Workspaces.
+- **Unified Sync**: The `sync` command updates the current Workspace from remote. Use `--all` to update all Workspaces.
 - **Preview Workspace**: A single preview environment that supports accurate synchronization of code from any Workspace (syncing only Tracked files), ensuring a clean preview environment.
 - **Live Preview**: Automatically monitors file changes and synchronizes them to the Preview Workspace in real-time.
 
@@ -68,17 +68,22 @@ workspace create feature-a feature-b feature-c
 
 ### 3. Sync Workspaces
 
-Use the `sync` command to update all workspaces with the latest changes from the remote repository.
+Use the `sync` command to update workspaces with the latest changes from the remote repository.
 
 ```bash
-# Run from any workspace
+# Sync current workspace (default)
 workspace sync
+
+# Sync all workspaces (Base + Siblings)
+workspace sync --all
 ```
 
 **Result**:
 
-- **Base Workspace**: Pulls `origin/main`.
-- **Sibling Workspaces**: Merges `origin/main` into their current branch and updates submodules.
+- **Current Workspace**: Pulls `origin/main` (rebase).
+- **With `--all`**:
+  - **Base Workspace**: Pulls `origin/main`.
+  - **Sibling Workspaces**: Merges `origin/main` into their current branch and updates submodules.
 
 ### 4. Live Preview
 
@@ -97,13 +102,13 @@ workspace preview
 
 ## 📚 Command Reference
 
-| Command   | Description                                                  | Example                      |
-| :-------- | :----------------------------------------------------------- | :--------------------------- |
-| `create`  | Create a new Workspace (Git Worktree).                       | `workspace create feature-a` |
-| `sync`    | Sync all workspaces from remote and expand shared resources. | `workspace sync`             |
-| `preview` | Start live preview sync to Base Workspace.                   | `workspace preview`          |
-| `delete`  | Delete a Workspace and its worktree.                         | `workspace delete feature-a` |
-| `status`  | View current status and list of workspaces.                  | `workspace status`           |
+| Command   | Description                                      | Example                      |
+| :-------- | :----------------------------------------------- | :--------------------------- |
+| `create`  | Create a new Workspace (Git Worktree).           | `workspace create feature-a` |
+| `sync`    | Sync workspace from remote. Use `--all` for all. | `workspace sync`             |
+| `preview` | Start live preview sync to Base Workspace.       | `workspace preview`          |
+| `delete`  | Delete a Workspace and its worktree.             | `workspace delete feature-a` |
+| `status`  | View current status and list of workspaces.      | `workspace status`           |
 
 ## ⚙️ Configuration
 
@@ -136,9 +141,10 @@ workspace preview
 
 1.  **Global Sync (`sync`)**:
 
-    - Updates Base Workspace from Remote.
-    - Propagates updates to all Feature Workspaces (Merge + Submodule Update).
-    - Expands shared resources (e.g., rules, configs) from `workspace_expand_folder`.
+    - **Default**: Updates current Workspace (Pull --rebase).
+    - **With `--all`**:
+      - Updates Base Workspace from Remote.
+      - Propagates updates to all Feature Workspaces (Merge + Submodule Update).
 
 2.  **Preview Sync (`preview`)**:
     - Identifies Common Root between Feature and Base submodules.
