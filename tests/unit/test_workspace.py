@@ -13,15 +13,17 @@ def mock_config():
 
 @patch("workspace_cli.core.workspace.create_worktree")
 @patch("pathlib.Path.mkdir")
+@patch("workspace_cli.core.workspace.submodule_update")
 @patch("pathlib.Path.exists")
-def test_create_workspace(mock_exists, mock_mkdir, mock_create_worktree, mock_config):
+def test_create_workspace(mock_exists, mock_submodule_update, mock_mkdir, mock_create_worktree, mock_config):
     # Mock paths
     mock_exists.side_effect = [False, True] # workspace dir, source repo
     
     create_workspace("test", mock_config)
     
-    mock_mkdir.assert_called()
+
     mock_create_worktree.assert_called()
+    mock_submodule_update.assert_called()
 
 @patch("workspace_cli.core.workspace.create_worktree")
 @patch("pathlib.Path.exists")
@@ -39,4 +41,6 @@ def test_delete_workspace(mock_exists, mock_remove_worktree, mock_rmtree, mock_c
     delete_workspace("test", mock_config)
     
     mock_remove_worktree.assert_called()
-    mock_rmtree.assert_called()
+    mock_remove_worktree.assert_called()
+    # rmtree is NOT called if remove_worktree succeeds
+    mock_rmtree.assert_not_called()

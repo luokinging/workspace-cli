@@ -15,12 +15,18 @@ class TestIntegration(unittest.TestCase):
         # Setup base workspace
         self.base_ws = self.test_dir / "base-ws"
         self.base_ws.mkdir()
+        subprocess.run(["git", "init"], cwd=self.base_ws, check=True)
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=self.base_ws, check=True)
         
-        # Setup a repo
-        self.repo_path = self.base_ws / "repo1"
+        # Setup a repo (outside base-ws)
+        self.repo_path = self.test_dir / "repo1"
         self.repo_path.mkdir()
         subprocess.run(["git", "init"], cwd=self.repo_path, check=True)
         subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=self.repo_path, check=True)
+        
+        # Add as submodule to base-ws
+        subprocess.run(["git", "submodule", "add", str(self.repo_path), "repo1"], cwd=self.base_ws, check=True)
+        subprocess.run(["git", "commit", "-m", "add submodule"], cwd=self.base_ws, check=True)
         
         # Create config
         self.config = {

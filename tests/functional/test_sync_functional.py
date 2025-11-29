@@ -53,19 +53,7 @@ def test_sync_command(base_workspace, run_cli):
     import json
     config = {
         "base_path": str(base_workspace),
-        "repos": [] # Auto-discovery should work if we don't provide repos? 
-                    # Actually sync_workspaces uses config.repos.
-                    # If we leave it empty, it won't sync submodules unless we populate it.
-                    # But wait, sync_workspaces logic:
-                    # 1. Update Base (pull main, submodule update)
-                    # 2. Update Siblings (merge main, submodule update)
-                    # It doesn't explicitly iterate config.repos for git operations on siblings, 
-                    # except maybe for logging or specific repo logic?
-                    # Let's check sync.py.
-                    # sync_workspaces iterates parent_dir.iterdir().
-                    # It calls submodule_update(path).
-                    # It doesn't use config.repos for the main sync logic.
-                    # So empty repos list is fine.
+        "repos": [] 
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
@@ -77,6 +65,8 @@ def test_sync_command(base_workspace, run_cli):
     
     # 4. Verify feature workspace has update
     assert (ws_path / "backend" / "new_feature.txt").exists()
+
+
 
 def test_preview_sync(base_workspace, run_cli):
     """Test preview sync."""

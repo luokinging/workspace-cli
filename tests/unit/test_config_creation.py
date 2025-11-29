@@ -12,8 +12,7 @@ runner = CliRunner()
 def test_save_config(tmp_path):
     config = WorkspaceConfig(
         base_path=Path("/tmp/base"),
-        repos=[RepoConfig(name="repo1", path=Path("repo1"))],
-        rules_repo_name="rules"
+        repos=[RepoConfig(name="repo1", path=Path("repo1"))]
     )
     config_path = tmp_path / "workspace.json"
     save_config(config, config_path)
@@ -23,17 +22,16 @@ def test_save_config(tmp_path):
         data = json.load(f)
         assert data["base_path"] == "/tmp/base"
         assert data["repos"][0]["name"] == "repo1"
-        assert data["rules_repo"] == "rules"
 
+@patch("workspace_cli.utils.git.get_submodule_status")
 @patch("workspace_cli.core.workspace.create_workspace")
-def test_create_command_auto_config(mock_create_workspace, tmp_path):
+def test_create_command_auto_config(mock_create_workspace, mock_get_submodule_status, tmp_path):
+    mock_get_submodule_status.return_value = {"repo1": "commit1"}
     # Run in a temp dir where no config exists
     with runner.isolated_filesystem(temp_dir=tmp_path):
         result = runner.invoke(app, [
             "create", "test-ws", 
-            "--base", "/tmp/base", 
-            "--repo", "repo1", 
-            "--repo", "repo2"
+            "--base", "/tmp/base"
         ])
         
         assert result.exit_code == 0

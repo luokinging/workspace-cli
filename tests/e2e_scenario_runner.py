@@ -116,7 +116,12 @@ def test_sync(base_ws, ws_path):
     
     # Create workspace.json for sync
     import json
-    config = {"base_path": str(base_ws), "repos": []}
+    config = {
+        "base_path": str(base_ws), 
+        "repos": [
+            {"name": "backend", "path": "backend"}
+        ]
+    }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
 
@@ -147,6 +152,16 @@ def test_preview(base_ws, ws_path):
     
     try:
         time.sleep(3) # Wait for startup
+        
+        # VERIFY ROOT BRANCH SWITCH
+        res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_ws, capture_output=True, text=True)
+        current_branch = res.stdout.strip()
+        print(f"[VERIFY] Base Workspace Branch: {current_branch}")
+        if current_branch == "feature-a/preview":
+            print(">>> VERIFICATION PASSED: Base Workspace switched to feature-a/preview.")
+        else:
+            print(f">>> VERIFICATION FAILED: Expected feature-a/preview, got {current_branch}")
+            # Don't exit yet, check file sync too
         
         print("[USER] Making uncommitted change in feature-a...")
         (ws_path / "backend" / "preview_test.txt").write_text("hello preview")

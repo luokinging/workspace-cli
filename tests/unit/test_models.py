@@ -11,9 +11,8 @@ def test_workspace_config():
     repo = RepoConfig(name="test", path=Path("test"))
     config = WorkspaceConfig(
         base_path=Path("/base"),
-        repos=[repo],
-        rules_repo_name="rules"
+        repos=[repo]
     )
     assert config.base_path == Path("/base")
     assert len(config.repos) == 1
-    assert config.rules_repo_name == "rules"
+
