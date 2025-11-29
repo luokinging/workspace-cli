@@ -5,10 +5,11 @@ import os
 import signal
 import typer
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from workspace_cli.models import WorkspaceConfig, RepoConfig
 from workspace_cli.utils.git import (
-    run_git_cmd, get_diff_files, checkout_new_branch, GitError, get_current_branch
+    run_git_cmd, get_diff_files, checkout_new_branch, GitError, get_current_branch,
+    get_merge_base, submodule_update, fetch_remote, merge_branch, get_commit_hash
 )
 
 class SyncError(Exception):
@@ -58,6 +59,15 @@ def _remove_pid_file(pid_file: Path):
         except (ValueError, ProcessLookupError, OSError):
             pass
 
+def _get_current_workspace_path(config: WorkspaceConfig) -> Optional[Path]:
+    cwd = Path.cwd()
+    base_name = config.base_path.name
+    # Check parents up to root
+    for parent in [cwd] + list(cwd.parents):
+        if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
+            return parent
+    return None
+
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     """Initialize preview workspace."""
     typer.secho(f"Initializing preview for workspace: {workspace_name}", fg=typer.colors.BLUE)
@@ -77,7 +87,7 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
         print(f"Source: {source_workspace_path}")
         print(f"Target: {target_workspace_path}")
         
-        # 2. Iterate over repos
+        # 2. Iterate over repos (submodules)
         for repo in config.repos:
             source_repo_path = source_workspace_path / repo.path
             target_repo_path = target_workspace_path / repo.path
@@ -89,56 +99,88 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
             print(f"Syncing repo: {repo.name}")
             
             try:
-                # 2.1 Source Side: Get changed files
-                run_git_cmd(["add", "-A"], source_repo_path)
-                changed_files = get_diff_files(source_repo_path, "main")
+                # 2.1 Target Side: Update to latest main
+                print(f"  Updating target {repo.name} to origin/main...")
+                fetch_remote(target_repo_path)
+                merge_branch(target_repo_path, "origin/main")
+                target_main_commit = get_commit_hash(target_repo_path, "HEAD")
+
+                # 2.2 Source Side: Get current commit
+                source_commit = get_commit_hash(source_repo_path, "HEAD")
+
+                # 2.3 Find Common Root
+                common_root = get_merge_base(target_repo_path, source_commit, target_main_commit) # Wait, need source commit in target repo?
+                # Git merge-base requires both commits to be present in the repo.
+                # Since source and target are different worktrees/clones, they might not have each other's objects if not pushed.
+                # BUT, here we assume they share the same remote.
+                # If source has local commits not pushed, target won't know them.
+                # So we can only find common root based on what target knows.
+                # Actually, if we use file sync, we don't strictly need the common root for git operations IF we just overwrite files.
+                # BUT the requirement says: "Reset to Common Root".
+                # If Source has local commits, Target can't reset to them.
+                # Target can only reset to a commit it has.
+                # If Source hasn't pushed, Target only has origin/main.
+                # So Common Root is likely origin/main (or whatever Source branched from).
                 
-                # 2.2 Target Side: Prepare Preview Branch
-                # Always use 'preview' branch
+                # Issue: `git merge-base` needs both commits in the SAME repo object database.
+                # If these are separate clones, they don't share objects.
+                # If they are worktrees of the same repo, they share objects!
+                # Are submodules worktrees? Usually no, they are separate .git dirs inside the parent worktree.
+                # UNLESS we set them up as worktrees too? No, standard submodules are separate clones (or share .git/modules).
+                # If they share .git/modules, they might share objects.
+                
+                # Assumption: Submodules are standard.
+                # If we can't find the source commit in target, we fallback to target's HEAD (main)?
+                # Or we fetch source's objects into target?
+                # `git fetch source_repo_path`?
+                
+                # Let's try to fetch from source repo into target repo to ensure we have the objects.
+                print(f"  Fetching objects from source submodule...")
+                run_git_cmd(["fetch", str(source_repo_path)], target_repo_path)
+                
+                # Now we can find merge base
+                common_root = get_merge_base(target_repo_path, source_commit, target_main_commit)
+                print(f"  Common root: {common_root[:7]}")
+
+                # 2.4 Prepare Preview Branch in Target
                 preview_branch = "preview"
+                # Reset to common root
+                # checkout -B preview <common_root>
+                run_git_cmd(["checkout", "-B", preview_branch, common_root], target_repo_path)
                 
-                # Checkout main first to be clean (if needed, or just force checkout preview)
-                # If we are already on preview, we might want to reset it?
-                # Let's try to checkout main then delete preview then create preview?
-                # Or just force create/reset preview.
+                # 2.5 Sync Files (Copy)
+                # We want to copy ALL tracked files from source to target.
+                # Or just copy everything excluding ignored?
+                # `shutil.copytree` with `dirs_exist_ok=True` copies everything.
+                # We should respect .gitignore.
+                # A simple way: `git ls-files` in source, then copy those.
                 
-                # If we are on preview branch, we can't delete it.
-                # So checkout main first.
-                try:
-                    run_git_cmd(["checkout", "main"], target_repo_path)
-                except GitError:
-                    pass # Maybe main doesn't exist?
+                source_files = run_git_cmd(["ls-files"], source_repo_path).splitlines()
+                # Also need to handle untracked but not ignored?
+                # `git ls-files --others --exclude-standard`
+                untracked_files = run_git_cmd(["ls-files", "--others", "--exclude-standard"], source_repo_path).splitlines()
+                all_files = source_files + untracked_files
                 
-                checkout_new_branch(target_repo_path, preview_branch, force=True)
-                
-                run_git_cmd(["clean", "-fd"], target_repo_path)
-                try:
-                    run_git_cmd(["restore", "."], target_repo_path)
-                except GitError:
-                    pass
-                
-                if not changed_files:
-                    print(f"  No changes in {repo.name}")
-                    continue
-                    
-                print(f"  Found {len(changed_files)} changed files.")
-                
-                # 2.3 Copy Files
-                for file_rel_path in changed_files:
+                print(f"  Syncing {len(all_files)} files...")
+                for file_rel_path in all_files:
                     src_file = source_repo_path / file_rel_path
                     dst_file = target_repo_path / file_rel_path
                     
                     if src_file.exists():
-                        # Copy file
                         dst_file.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src_file, dst_file)
-                        typer.secho(f"    Copied: {file_rel_path}", fg=typer.colors.GREEN)
-                    else:
-                        # File deleted in source?
-                        if dst_file.exists():
-                            dst_file.unlink()
-                            typer.secho(f"    Deleted: {file_rel_path}", fg=typer.colors.RED)
-                            
+                
+                # What about deleted files?
+                # If file exists in Target (from Common Root) but not in Source, it should be deleted.
+                # We can list files in Target (current preview branch) and check if they exist in Source.
+                target_files = run_git_cmd(["ls-files"], target_repo_path).splitlines()
+                for file_rel_path in target_files:
+                    src_file = source_repo_path / file_rel_path
+                    dst_file = target_repo_path / file_rel_path
+                    if not src_file.exists() and dst_file.exists():
+                        dst_file.unlink()
+                        # print(f"    Deleted: {file_rel_path}")
+
             except GitError as e:
                 print(f"  Git Error in {repo.name}: {e}")
                 raise SyncError(f"Sync failed for {repo.name}")
@@ -265,99 +307,59 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
     finally:
         _remove_pid_file(_get_pid_file(config))
 
-def sync_rules(config: WorkspaceConfig) -> None:
-    """Sync rules repo."""
-    if not config.rules_repo_name:
-        print("No rules repo configured.")
-        return
-
-    # Find rules repo config
-    rules_repo_config = next((r for r in config.repos if r.name == config.rules_repo_name), None)
-    if not rules_repo_config:
-        print(f"Rules repo '{config.rules_repo_name}' not found in repos list.")
-        return
-
-    # 1. Locate Rules Repo in current workspace (Source)
-    # We assume we are running this from the source workspace
-    # How do we know the source workspace?
-    # The CLI doesn't take workspace arg for syncrule, it assumes current context.
-    # But `load_config` tries to find workspace.json.
-    # If we are in a workspace directory, `config.base_path` is the root.
-    # We need to know WHICH workspace we are in.
+def sync_workspaces(config: WorkspaceConfig) -> None:
+    """
+    Sync all workspaces.
+    1. Update Base Workspace (pull origin main).
+    2. Update all sibling workspaces (merge origin/main + update submodules).
+    """
+    base_path = config.base_path
+    print(f"Syncing Base Workspace: {base_path}")
     
-    # Let's try to infer current workspace name from CWD
-    cwd = Path.cwd()
-    base_name = config.base_path.name
-    
-    # Check if we are in a workspace dir: {base_name}-{name}
-    # Or if we are in a repo subdir
-    
-    # This is tricky without explicit context.
-    # Let's assume the user runs this from the workspace root or a repo inside it.
-    
-    current_workspace_path = None
-    for parent in [cwd] + list(cwd.parents):
-        if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
-            current_workspace_path = parent
-            break
-    
-    if not current_workspace_path:
-        print("Could not determine current workspace. Please run from within a workspace.")
-        return
-
-    workspace_name = current_workspace_path.name[len(base_name)+1:]
-    print(f"Syncing rules from workspace: {workspace_name}")
-
-    source_rules_path = current_workspace_path / rules_repo_config.path
-    
-    if not source_rules_path.exists():
-        print(f"Rules repo not found at {source_rules_path}")
-        return
-
     try:
-        # 2. Commit and Push in Source
-        print("Committing changes in rules repo...")
-        run_git_cmd(["add", "."], source_rules_path)
-        try:
-            run_git_cmd(["commit", "-m", f"Sync rules from {workspace_name}"], source_rules_path)
-        except GitError:
-            print("Nothing to commit.")
-        
-        print("Pushing changes...")
-        current_branch = get_current_branch(source_rules_path)
-        # Push to main so others can pull it
-        run_git_cmd(["push", "origin", f"{current_branch}:main"], source_rules_path)
-        
-        # 3. Update other workspaces
-        # Iterate over all sibling workspaces
-        parent_dir = config.base_path.parent
-        for path in parent_dir.iterdir():
-            if path.is_dir() and path.name.startswith(f"{base_name}-") and path != current_workspace_path:
-                other_ws_name = path.name[len(base_name)+1:]
-                other_rules_path = path / rules_repo_config.path
-                
-                if other_rules_path.exists():
-                    print(f"Updating rules in {other_ws_name}...")
-                    try:
-                        run_git_cmd(["pull", "origin", "main"], other_rules_path)
-                        # Or merge?
-                        # run_git_cmd(["merge", "origin/main"], other_rules_path)
-                    except GitError as e:
-                        print(f"Failed to update {other_ws_name}: {e}")
-                        
+        # 1. Update Base
+        print("  Pulling origin main...")
+        run_git_cmd(["pull", "origin", "main"], base_path)
+        print("  Updating submodules...")
+        submodule_update(base_path)
     except GitError as e:
-        print(f"Git error during sync: {e}")
+        print(f"Error updating Base Workspace: {e}")
+        return
 
-    # 4. Handle workspace_expand_folder
+    # 2. Update Siblings
+    base_name = base_path.name
+    parent_dir = base_path.parent
+    
+    print("Syncing Sibling Workspaces...")
+    for path in parent_dir.iterdir():
+        if path.is_dir() and path.name.startswith(f"{base_name}-") and path.name != base_name:
+            ws_name = path.name[len(base_name)+1:]
+            print(f"  Syncing {ws_name}...")
+            
+            try:
+                # Merge origin/main
+                # Note: We are merging origin/main into the current branch (stand)
+                print(f"    Merging origin/main...")
+                fetch_remote(path)
+                merge_branch(path, "origin/main")
+                
+                # Update submodules
+                print(f"    Updating submodules...")
+                submodule_update(path)
+                
+            except GitError as e:
+                print(f"    Failed to sync {ws_name}: {e}")
+
+    # 3. Handle workspace_expand_folder
     if config.workspace_expand_folder:
         expand_folder_name = config.workspace_expand_folder
-        source_expand_path = source_rules_path / expand_folder_name
+        source_expand_path = base_path / expand_folder_name
         
         if not source_expand_path.exists():
-            print(f"Expand folder '{expand_folder_name}' not found in rules repo.")
+            print(f"Expand folder '{expand_folder_name}' not found in Base Workspace.")
             return
 
-        print(f"Expanding content from '{expand_folder_name}' to all workspaces...")
+        print(f"Expanding content from '{expand_folder_name}' to all sibling workspaces...")
         
         # Get list of items to expand
         items_to_expand = list(source_expand_path.iterdir())
@@ -365,42 +367,29 @@ def sync_rules(config: WorkspaceConfig) -> None:
             print(f"No items found in '{expand_folder_name}'.")
             return
 
-        # Identify all workspaces (including current)
-        workspaces = []
-        parent_dir = config.base_path.parent
         for path in parent_dir.iterdir():
-            if path.is_dir() and (path.name == base_name or path.name.startswith(f"{base_name}-")):
-                workspaces.append(path)
-        
-        # Also include the base workspace if it follows the naming convention or is the base path?
-        # The config.base_path is usually the target workspace path in some contexts, 
-        # but here we are iterating over siblings.
-        # Let's assume the standard workspace structure.
-        
-        for ws_path in workspaces:
-            ws_name = ws_path.name[len(base_name)+1:]
-            print(f"  Expanding to workspace: {ws_name}")
-            
-            for item in items_to_expand:
-                # We only care about the name relative to expand folder
-                rel_name = item.name
-                target_path = ws_path / rel_name
+            if path.is_dir() and path.name.startswith(f"{base_name}-") and path.name != base_name:
+                ws_name = path.name[len(base_name)+1:]
+                print(f"  Expanding to {ws_name}...")
                 
-                try:
-                    # 1. Delete existing
-                    if target_path.exists():
-                        if target_path.is_dir():
-                            shutil.rmtree(target_path)
+                for item in items_to_expand:
+                    rel_name = item.name
+                    target_path = path / rel_name
+                    
+                    try:
+                        # 1. Delete existing
+                        if target_path.exists():
+                            if target_path.is_dir():
+                                shutil.rmtree(target_path)
+                            else:
+                                target_path.unlink()
+                        
+                        # 2. Copy new
+                        if item.is_dir():
+                            shutil.copytree(item, target_path)
                         else:
-                            target_path.unlink()
-                        # print(f"    Deleted existing {rel_name}")
-                    
-                    # 2. Copy new
-                    if item.is_dir():
-                        shutil.copytree(item, target_path)
-                    else:
-                        shutil.copy2(item, target_path)
-                    print(f"    Expanded: {rel_name}")
-                    
-                except Exception as e:
-                    print(f"    Error expanding {rel_name} to {ws_name}: {e}")
+                            shutil.copy2(item, target_path)
+                        # print(f"    Expanded: {rel_name}")
+                        
+                    except Exception as e:
+                        print(f"    Error expanding {rel_name} to {ws_name}: {e}")
