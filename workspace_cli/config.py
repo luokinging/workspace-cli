@@ -38,7 +38,8 @@ def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
     return WorkspaceConfig(
         base_path=base_path,
         repos=repos,
-        rules_repo_name=data.get("rules_repo")
+        rules_repo_name=data.get("rules_repo"),
+        workspace_expand_folder=data.get("workspace_expand_folder")
     )
 
 def save_config(config: WorkspaceConfig, path: Path) -> None:
@@ -49,7 +50,8 @@ def save_config(config: WorkspaceConfig, path: Path) -> None:
             {"name": r.name, "path": str(r.path), "url": r.url}
             for r in config.repos
         ],
-        "rules_repo": config.rules_repo_name
+        "rules_repo": config.rules_repo_name,
+        "workspace_expand_folder": config.workspace_expand_folder
     }
     
     with open(path, "w") as f:
