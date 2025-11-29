@@ -1,6 +1,6 @@
 import typer
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from workspace_cli.config import load_config
 from workspace_cli.core import workspace as workspace_core
 from workspace_cli.core import sync as sync_core
@@ -16,8 +16,6 @@ def main(
     Workspace CLI
     """
     from workspace_cli.utils.logger import setup_logging
-    # If log_file is not provided, maybe check config or default to workspace-cli.log in root?
-    # For now, let's just use what is passed.
     setup_logging(debug, log_file)
     if debug:
         from workspace_cli.utils.logger import get_logger
@@ -28,12 +26,11 @@ def main(
 def create(
     name: str,
     base: Path = typer.Option(None, help="Path to base workspace (required if config missing)"),
-    repo: List[str] = typer.Option(None, help="List of repo names (required if config missing)")
 ):
     """
     Create a new workspace.
 
-    If a configuration file (workspace.json) does not exist, you must provide --base and --repo to create one.
+    If a configuration file (workspace.json) does not exist, you must provide --base to create one.
     
     Examples:
     
@@ -41,14 +38,14 @@ def create(
     $ workspace create feature-a
     
     # Create a new workspace and generate config (first run)
-    $ workspace create feature-a --base /path/to/base --repo frontend --repo backend
+    $ workspace create feature-a --base /path/to/base
     """
     try:
         try:
             config = load_config()
         except FileNotFoundError:
-            if not base or not repo:
-                typer.echo("Config not found. Please provide --base and --repo to create one.", err=True)
+            if not base:
+                typer.echo("Config not found. Please provide --base to create one.", err=True)
                 raise typer.Exit(code=1)
             
             # Create new config
@@ -57,8 +54,24 @@ def create(
             
             # Assume base path is absolute or relative to CWD
             base_path = base.resolve()
-            repos = [RepoConfig(name=r, path=Path(r)) for r in repo]
+            # In new architecture, we don't need to specify repos manually.
+            # They are defined by git submodules in the base path.
+            # But WorkspaceConfig model might still expect a list.
+            # We can auto-discover them or just leave it empty for now and let core handle it?
+            # Core uses config.repos to iterate.
+            # So we SHOULD discover them.
             
+            # Auto-discover submodules from .gitmodules
+            # This requires parsing .gitmodules or using git command.
+            # Let's use git command.
+            from workspace_cli.utils.git import get_submodule_status
+            try:
+                submodules = get_submodule_status(base_path)
+                repos = [RepoConfig(name=Path(p).name, path=Path(p)) for p in submodules.keys()]
+            except Exception:
+                # Fallback or empty?
+                repos = []
+
             config = WorkspaceConfig(
                 base_path=base_path,
                 repos=repos
@@ -141,11 +154,14 @@ def preview(
             current_workspace_path = None
             # Check parents up to root
             for parent in [cwd] + list(cwd.parents):
-                if parent.name.startswith(f"{base_name}-") and parent.parent == config.base_path.parent:
+                if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
                     current_workspace_path = parent
                     break
             
             if current_workspace_path:
+                if current_workspace_path.name == base_name:
+                     typer.echo("You are in the Base Workspace. Please specify a target workspace to preview.")
+                     raise typer.Exit(code=1)
                 workspace = current_workspace_path.name[len(base_name)+1:]
                 typer.echo(f"Auto-detected workspace: {workspace}")
             else:
@@ -158,19 +174,19 @@ def preview(
         raise typer.Exit(code=1)
 
 @app.command()
-def syncrule():
+def sync():
     """
-    Sync rules repo.
+    Sync all workspaces.
 
-    Commits and pushes changes in the rules repo from the current workspace, then merges them to other workspaces.
+    Updates Base Workspace from remote main, and propagates changes to all sibling workspaces.
     
     Example:
     
-    $ workspace syncrule
+    $ workspace sync
     """
     try:
         config = load_config()
-        sync_core.sync_rules(config)
+        sync_core.sync_workspaces(config)
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
