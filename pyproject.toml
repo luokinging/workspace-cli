@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dev-ws"
+version = "0.1.2"
+description = "A CLI tool for managing multiple workspaces with git worktrees and live preview."
+readme = "README.md"
+authors = [
+  { name="Luoking", email="test@example.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.7"
+dependencies = [
+    "typer",
+    "pydantic",
+    "watchdog",
+    "rich",
+    "shellingham"
+]
+
+[project.scripts]
+workspace = "workspace_cli.main:app"
+workspace-cli = "workspace_cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]

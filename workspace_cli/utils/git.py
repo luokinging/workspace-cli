@@ -26,7 +26,8 @@ def get_current_branch(repo_path: Path) -> str:
 def is_dirty(repo_path: Path) -> bool:
     """Check if the repo has uncommitted changes."""
     # Check for modified files
-    status = run_git_cmd(["status", "--porcelain"], repo_path)
+    # Check for modified files
+    status = run_git_cmd(["status", "--porcelain", "-uall"], repo_path)
     return bool(status)
 
 def create_worktree(repo_path: Path, branch: str, path: Path) -> None:
