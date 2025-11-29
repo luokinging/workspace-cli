@@ -22,6 +22,16 @@ Ensure that Python 3.8+ and Git are installed in your environment.
 pip install dev-ws
 ```
 
+### Local Development Installation
+
+If you want to install from source for development:
+
+```bash
+git clone https://github.com/your-repo/workspace-cli.git
+cd workspace-cli
+pip install -e .
+```
+
 ## 🚀 Quick Start
 
 ### 1. Create Workspace
@@ -180,6 +190,8 @@ workspace syncrule
 - Rules Repo switches to `main` branch.
 - `commit` + `push` current workspace rules changes.
 - Automatically executes `pull origin main` (or merge) for Rules Repos in other workspaces.
+- Automatically executes `pull origin main` (or merge) for Rules Repos in other workspaces.
+- **Expand Folder**: If `workspace_expand_folder` is configured, contents of that folder in Rules Repo will be expanded (copied) to the root of all workspaces, ensuring consistent configuration (e.g., for AI agents).
 - Returns to the current workspace's Feature branch.
 
 #### Scenario 9: View Workspace Status
@@ -257,18 +269,20 @@ This project uses a unique branch model to isolate development environments from
       "url": "git@github.com:user/repo.git"
     }
   ],
-  "rules_repo": "rules-repo-name"
+  "rules_repo": "rules-repo-name",
+  "workspace_expand_folder": "expand"
 }
 ```
 
-| Field          | Type   | Description                                                                                                                 |
-| :------------- | :----- | :-------------------------------------------------------------------------------------------------------------------------- |
-| `base_path`    | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this, and Preview also runs in this directory. |
-| `repos`        | List   | **List of managed repositories**. Defines which repositories need to be managed by Workspace.                               |
-| `repos[].name` | String | Repository name, used in CLI commands (e.g., `create --repo name`).                                                         |
-| `repos[].path` | String | Path of repository relative to Workspace root.                                                                              |
-| `repos[].url`  | String | (Optional) Remote Git URL of repository. **Note: Currently unused, reserved for future auto-clone support.**                |
-| `rules_repo`   | String | (Optional) Specifies which repository is the rules repository, used for `syncrule` command.                                 |
+| Field                     | Type   | Description                                                                                                                 |
+| :------------------------ | :----- | :-------------------------------------------------------------------------------------------------------------------------- |
+| `base_path`               | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this, and Preview also runs in this directory. |
+| `repos`                   | List   | **List of managed repositories**. Defines which repositories need to be managed by Workspace.                               |
+| `repos[].name`            | String | Repository name, used in CLI commands (e.g., `create --repo name`).                                                         |
+| `repos[].path`            | String | Path of repository relative to Workspace root.                                                                              |
+| `repos[].url`             | String | (Optional) Remote Git URL of repository. **Note: Currently unused, reserved for future auto-clone support.**                |
+| `rules_repo`              | String | (Optional) Specifies which repository is the rules repository, used for `syncrule` command.                                 |
+| `workspace_expand_folder` | String | (Optional) Path to a folder in Rules Repo. Its contents will be expanded to the root of all workspaces during `syncrule`.   |
 
 ### Command Reference
 

@@ -106,3 +106,23 @@
 2.  **验证**:
     - 生成了 `debug.log` 文件。
     - 文件中包含 DEBUG 级别的日志信息。
+
+### Case 7: Rules Sync with Expansion
+
+**目标**: 验证 `syncrule` 命令能够同步 rules repo，并根据 `workspace_expand_folder` 配置将指定文件夹的内容展开到所有 workspace。
+
+**步骤**:
+
+1.  **配置 Rules Repo**:
+    - 创建一个独立的 `rules-repo` git 仓库。
+    - 在 `workspace.json` 中配置 `rules_repo` 和 `workspace_expand_folder` (例如设置为 "expand")。
+2.  **准备 Expansion 内容**:
+    - 在 `rules-repo` 中创建 `expand` 目录。
+    - 在 `expand` 目录中添加文件 `agent_config.json`。
+    - 提交并推送到远程 (模拟)。
+3.  **执行 Sync**:
+    - 在任意 workspace 中执行: `workspace-cli syncrule`。
+4.  **验证**:
+    - `agent_config.json` 出现在所有 workspace 的根目录下。
+    - 如果 workspace 中原先存在同名文件，应被覆盖。
+    - 如果 `expand` 目录中有子目录，也应被递归复制。
