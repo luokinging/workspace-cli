@@ -62,10 +62,22 @@ def _remove_pid_file(pid_file: Path):
 def _get_current_workspace_path(config: WorkspaceConfig) -> Optional[Path]:
     cwd = Path.cwd()
     base_name = config.base_path.name
+    base_parent = config.base_path.parent.resolve()
+    
     # Check parents up to root
     for parent in [cwd] + list(cwd.parents):
-        if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
+        parent_resolved = parent.resolve()
+        # Debug
+        print(f"Checking {parent_resolved.name} vs {base_name}")
+        print(f"Checking {parent_resolved.parent} vs {base_parent}")
+        
+        if (parent_resolved.name == base_name or parent_resolved.name.startswith(f"{base_name}-")) and parent_resolved.parent == base_parent:
             return parent
+    
+    # Debug if not found
+    print(f"DEBUG: CWD={cwd.resolve()}")
+    print(f"DEBUG: Base Name={base_name}")
+    print(f"DEBUG: Base Parent={base_parent}")
     return None
 
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
@@ -87,6 +99,32 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
         print(f"Source: {source_workspace_path}")
         print(f"Target: {target_workspace_path}")
         
+        print(f"Target: {target_workspace_path}")
+        
+        # 1.5 Sync Root Workspace Branch
+        print(f"Syncing Root Workspace...")
+        try:
+            # Update target to origin/main info (fetch)
+            fetch_remote(target_workspace_path)
+            target_main_commit = get_commit_hash(target_workspace_path, "origin/main")
+            
+            # Source commit
+            source_commit = get_commit_hash(source_workspace_path, "HEAD")
+            
+            # Common Root
+            # Since they are worktrees, they share objects, so we can find merge base directly.
+            common_root = get_merge_base(target_workspace_path, source_commit, target_main_commit)
+            print(f"  Root Common root: {common_root[:7]}")
+            
+            # Checkout Preview Branch
+            preview_branch = f"{workspace_name}/preview"
+            run_git_cmd(["checkout", "-B", preview_branch, common_root], target_workspace_path)
+            print(f"  Switched Root to branch: {preview_branch}")
+            
+        except GitError as e:
+             print(f"  Git Error in Root: {e}")
+             raise SyncError(f"Sync failed for Root Workspace: {e}")
+
         # 2. Iterate over repos (submodules)
         for repo in config.repos:
             source_repo_path = source_workspace_path / repo.path
@@ -314,10 +352,27 @@ def sync_workspaces(config: WorkspaceConfig) -> None:
     2. Update all sibling workspaces (merge origin/main + update submodules).
     """
     base_path = config.base_path
-    print(f"Syncing Base Workspace: {base_path}")
-    
+    # 0. Handle Current Workspace (if we are in one)
+    current_ws_path = _get_current_workspace_path(config)
+    if current_ws_path and current_ws_path != base_path:
+        print(f"Detected current workspace: {current_ws_path.name}")
+        try:
+            # Pull --rebase (to get latest main)
+            print("  Pulling latest changes (rebase)...")
+            run_git_cmd(["pull", "--rebase", "origin", "main"], current_ws_path)
+            
+        except GitError as e:
+            print(f"  Error syncing current workspace: {e}")
+            # Should we stop? Probably yes, to avoid overwriting or conflicts later?
+            # But sync_workspaces continues to other siblings.
+            # Let's warn and continue, or return?
+            # If push failed, maybe we shouldn't sync others?
+            # User wants "submit". If submit fails, we should probably stop.
+            return
+
+    # 1. Update Base
     try:
-        # 1. Update Base
+        print(f"Syncing Base Workspace: {base_path}")
         print("  Pulling origin main...")
         run_git_cmd(["pull", "origin", "main"], base_path)
         print("  Updating submodules...")
@@ -349,47 +404,3 @@ def sync_workspaces(config: WorkspaceConfig) -> None:
                 
             except GitError as e:
                 print(f"    Failed to sync {ws_name}: {e}")
-
-    # 3. Handle workspace_expand_folder
-    if config.workspace_expand_folder:
-        expand_folder_name = config.workspace_expand_folder
-        source_expand_path = base_path / expand_folder_name
-        
-        if not source_expand_path.exists():
-            print(f"Expand folder '{expand_folder_name}' not found in Base Workspace.")
-            return
-
-        print(f"Expanding content from '{expand_folder_name}' to all sibling workspaces...")
-        
-        # Get list of items to expand
-        items_to_expand = list(source_expand_path.iterdir())
-        if not items_to_expand:
-            print(f"No items found in '{expand_folder_name}'.")
-            return
-
-        for path in parent_dir.iterdir():
-            if path.is_dir() and path.name.startswith(f"{base_name}-") and path.name != base_name:
-                ws_name = path.name[len(base_name)+1:]
-                print(f"  Expanding to {ws_name}...")
-                
-                for item in items_to_expand:
-                    rel_name = item.name
-                    target_path = path / rel_name
-                    
-                    try:
-                        # 1. Delete existing
-                        if target_path.exists():
-                            if target_path.is_dir():
-                                shutil.rmtree(target_path)
-                            else:
-                                target_path.unlink()
-                        
-                        # 2. Copy new
-                        if item.is_dir():
-                            shutil.copytree(item, target_path)
-                        else:
-                            shutil.copy2(item, target_path)
-                        # print(f"    Expanded: {rel_name}")
-                        
-                    except Exception as e:
-                        print(f"    Error expanding {rel_name} to {ws_name}: {e}")
