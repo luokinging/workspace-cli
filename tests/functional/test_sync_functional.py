@@ -48,6 +48,7 @@ def test_preview_sync(base_workspace, run_cli):
         #   shutil.copy2(src_file, dst_file)
         
         # So the file should be in base_workspace/repo1
+        # 4. Verify file exists in base workspace (preview target)
         target_file = base_workspace / "repo1" / "new_file.txt"
         assert target_file.exists()
         assert target_file.read_text() == "hello"
