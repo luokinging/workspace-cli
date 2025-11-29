@@ -65,6 +65,74 @@ def test_sync_command(base_workspace, run_cli):
     
     # 4. Verify feature workspace has update
     assert (ws_path / "backend" / "new_feature.txt").exists()
+    
+    # Verify Base Workspace did NOT update (since we didn't use --all)
+    # Actually, Base Workspace might be updated if we are in it? No, we are in feature workspace.
+    # But wait, sync logic for current workspace is "pull --rebase origin main".
+    # Base workspace is a separate worktree/clone.
+    # So Base Workspace should NOT be updated by "sync" in feature workspace.
+    # Let's check Base Workspace backend submodule.
+    # It should still point to old commit unless we updated it?
+    # Wait, remote-main was updated. Base Workspace pulls from remote-main.
+    # If we didn't sync Base, it shouldn't have the new commit.
+    # But submodules?
+    # Let's check if a file exists in Base Workspace that was added to main.
+    # We didn't add a file to main, we updated submodule pointer.
+    # So we check submodule pointer in Base Workspace.
+    # It should be OLD.
+    
+    # How to check submodule pointer?
+    # git -C base_workspace/backend rev-parse HEAD
+    # But backend repo in base workspace is a clone.
+    # If we didn't run "git pull" in base workspace, it shouldn't change.
+    
+    # Let's verify Base Workspace is untouched.
+    # We can check if "git status" in base workspace shows "behind"?
+    # Or just check if it has the new commit in main.
+    
+    res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=base_workspace, capture_output=True, text=True)
+    base_head = res.stdout.strip()
+    
+    res = subprocess.run(["git", "ls-remote", "origin", "main"], cwd=base_workspace, capture_output=True, text=True)
+    remote_head = res.stdout.split()[0]
+    
+    # Base HEAD should NOT be Remote HEAD (because we didn't sync all)
+    assert base_head != remote_head
+
+def test_sync_all_command(base_workspace, run_cli):
+    """Test the sync --all command."""
+    # 1. Create feature workspace
+    run_cli(["create", "feature2", "--base", str(base_workspace)])
+    ws_path = base_workspace.parent / "base-ws-feature2"
+    
+    # 2. Simulate remote update (add file to main)
+    test_dir = base_workspace.parent
+    remote_main = test_dir / "remote-main"
+    main_update = test_dir / "main-update-2"
+    subprocess.run(["git", "clone", str(remote_main), str(main_update)], check=True)
+    (main_update / "new_file.txt").write_text("new file")
+    subprocess.run(["git", "add", "."], cwd=main_update, check=True)
+    subprocess.run(["git", "commit", "-m", "add new file"], cwd=main_update, check=True)
+    subprocess.run(["git", "push"], cwd=main_update, check=True)
+    
+    # Create config
+    import json
+    config = {
+        "base_path": str(base_workspace),
+        "repos": [] 
+    }
+    with open(ws_path / "workspace.json", "w") as f:
+        json.dump(config, f)
+
+    # 3. Run sync --all
+    result = run_cli(["sync", "--all"], cwd=ws_path)
+    assert result.returncode == 0
+    
+    # 4. Verify Base Workspace updated
+    assert (base_workspace / "new_file.txt").exists()
+    
+    # 5. Verify Feature Workspace updated
+    assert (ws_path / "new_file.txt").exists()
 
 
 

@@ -125,13 +125,35 @@ def test_sync(base_ws, ws_path):
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
 
-    # Run sync
+    # Run sync (Current Only)
+    print("[USER] Running 'workspace sync' (Current Only)...")
     run_cmd(CLI_CMD + ["sync"], cwd=ws_path)
     
     if (ws_path / "backend" / "new_feature.txt").exists():
-        print(">>> VERIFICATION PASSED: Sync propagated changes.")
+        print(">>> VERIFICATION PASSED: Sync updated current workspace.")
     else:
-        print(">>> VERIFICATION FAILED: Sync did not propagate changes.")
+        print(">>> VERIFICATION FAILED: Sync did not update current workspace.")
+        sys.exit(1)
+        
+    # Verify Base Workspace NOT updated
+    if (base_ws / "backend" / "new_feature.txt").exists():
+        print(">>> VERIFICATION FAILED: Base workspace updated but should not be (without --all).")
+        # Note: This might fail if Base was somehow updated by something else, but it shouldn't be.
+        # However, Base Workspace pulls from remote-main. 
+        # remote-main was updated.
+        # But we didn't run pull in Base.
+        sys.exit(1)
+    else:
+        print(">>> VERIFICATION PASSED: Base workspace not updated (as expected).")
+
+    # Run sync --all
+    print("[USER] Running 'workspace sync --all'...")
+    run_cmd(CLI_CMD + ["sync", "--all"], cwd=ws_path)
+    
+    if (base_ws / "backend" / "new_feature.txt").exists():
+        print(">>> VERIFICATION PASSED: Sync --all updated Base workspace.")
+    else:
+        print(">>> VERIFICATION FAILED: Sync --all did not update Base workspace.")
         sys.exit(1)
 
 def test_preview(base_ws, ws_path):
