@@ -1,135 +1,93 @@
-import os
-import shutil
 import pytest
+import shutil
+import json
 from pathlib import Path
 from workspace_cli.models import WorkspaceConfig, RepoConfig
-from workspace_cli.core.sync import sync_rules
-from workspace_cli.utils.git import run_git_cmd
+from workspace_cli.core.sync import sync_workspaces
 
-@pytest.fixture
-def temp_workspace_env(tmp_path):
-    """
-    Creates a temporary environment with:
-    - A base directory
-    - A rules repo (git initialized)
-    - Two workspaces: base-ws1, base-ws2
-    """
-    base_dir = tmp_path / "workspaces"
-    base_dir.mkdir()
-    
-    # Create rules repo origin
-    rules_origin = tmp_path / "rules_origin"
-    rules_origin.mkdir()
-    run_git_cmd(["init", "--bare"], rules_origin)
-    
-    # Create workspaces
-    ws1 = base_dir / "base-ws1"
-    ws1.mkdir()
-    ws2 = base_dir / "base-ws2"
-    ws2.mkdir()
-    
-    # Setup rules repo in ws1
-    ws1_rules = ws1 / "rules"
-    ws1_rules.mkdir()
-    run_git_cmd(["init"], ws1_rules)
-    run_git_cmd(["remote", "add", "origin", str(rules_origin)], ws1_rules)
-    
-    # Create expand folder and some content
-    expand_folder = ws1_rules / "expand"
+def test_sync_expand(base_workspace, run_cli):
+    """Test workspace_expand_folder logic."""
+    # 1. Setup Base Workspace with expand folder and config
+    expand_folder = base_workspace / "expand"
     expand_folder.mkdir()
     (expand_folder / "config.json").write_text('{"foo": "bar"}')
     (expand_folder / "subdir").mkdir()
     (expand_folder / "subdir" / "script.py").write_text('print("hello")')
     
-    # Commit and push
-    run_git_cmd(["add", "."], ws1_rules)
-    run_git_cmd(["commit", "-m", "Initial commit"], ws1_rules)
-    run_git_cmd(["branch", "-M", "main"], ws1_rules)
-    run_git_cmd(["push", "-u", "origin", "main"], ws1_rules)
+    # Update config in base workspace (if it exists, or create it)
+    # The CLI loads config from CWD or arguments.
+    # We need to make sure `sync` command loads a config that has `workspace_expand_folder`.
+    # `sync` command calls `load_config()`.
+    # `load_config` looks for `workspace.json` in CWD or parents.
     
-    # Setup rules repo in ws2 (clone)
-    run_git_cmd(["clone", str(rules_origin), str(ws2 / "rules")], base_dir) # clone into ws2/rules
-    # Wait, clone creates the dir.
-    # run_git_cmd(["clone", str(rules_origin), "rules"], ws2) # This might be easier if cwd is ws2
+    # Create workspace.json in base_workspace
+    config_data = {
+        "base_path": str(base_workspace),
+        "repos": [], # We can leave this empty or populate if needed for sync
+        "workspace_expand_folder": "expand"
+    }
+    # We need repos for sync to work without error?
+    # sync_workspaces iterates repos to update them.
+    # If repos is empty, it just updates base and siblings (merge main).
+    # That's fine for this test.
     
-    # Let's just manually setup ws2 rules for simplicity or use clone correctly
-    if (ws2 / "rules").exists():
-        shutil.rmtree(ws2 / "rules")
-    run_git_cmd(["clone", str(rules_origin), str(ws2 / "rules")], base_dir)
-
-    return base_dir, ws1, ws2
-
-def test_sync_rules_expand(temp_workspace_env):
-    base_dir, ws1, ws2 = temp_workspace_env
+    with open(base_workspace / "workspace.json", "w") as f:
+        json.dump(config_data, f)
+        
+    # Commit changes to base workspace so they are in main
+    import subprocess
+    subprocess.run(["git", "add", "."], cwd=base_workspace, check=True)
+    subprocess.run(["git", "commit", "-m", "add expand folder"], cwd=base_workspace, check=True)
     
-    # Create config
-    config = WorkspaceConfig(
-        base_path=ws1, # This is technically not the base path in the sense of the CLI, but used for resolving
-        repos=[RepoConfig(name="rules", path=Path("rules"))],
-        rules_repo_name="rules",
-        workspace_expand_folder="expand"
-    )
+    # 2. Create Sibling Workspace
+    # We can use CLI create, but we need to make sure it uses the config we just made?
+    # CLI create with --base uses the base path.
+    # If we run create from base_workspace, it might pick up config?
+    # Let's run create command.
+    run_cli(["create", "feature1", "--base", str(base_workspace)])
     
-    # Create a pre-existing file in ws2 that should be overwritten
-    (ws2 / "config.json").write_text('{"old": "value"}')
+    ws_path = base_workspace.parent / "base-ws-feature1"
     
-    # Create a pre-existing dir in ws2 that should be overwritten
-    (ws2 / "subdir").mkdir()
-    (ws2 / "subdir" / "old.txt").write_text("old")
-
-    # Change CWD to ws1 to simulate running from there
-    cwd = os.getcwd()
-    os.chdir(ws1)
-    try:
-        # We need to mock the config.base_path to match the structure expected by sync_rules
-        # sync_rules expects config.base_path.parent to contain the workspaces
-        # And workspaces are named {base_name}-{name}
-        # Here our base_dir is the parent.
-        # And our workspaces are named base-ws1, base-ws2.
-        # So base_name is 'base'.
-        # We need config.base_path to be something that has .parent as base_dir.
-        # Let's say config.base_path is ws1.
-        # But ws1 name is 'base-ws1'.
-        # So config.base_path.name is 'base-ws1'.
-        # The code expects `base_name` to be `config.base_path.name`.
-        # Wait, the code says:
-        # base_name = config.base_path.name
-        # ... parent.name.startswith(f"{base_name}-")
-        # If base_name is 'base-ws1', it looks for 'base-ws1-...'
-        # This implies the workspaces are named 'project-ws1', 'project-ws2' where 'project' is the base name?
-        # No, the CLI usually creates workspaces like 'project', 'project-feature1'.
-        # The 'base' workspace is 'project'.
-        # So if we are in 'project', base_name is 'project'.
-        # And 'project-feature1' starts with 'project-'.
+    # 3. Create conflicting files in Sibling to test overwrite
+    (ws_path / "config.json").write_text('{"old": "value"}')
+    (ws_path / "subdir").mkdir(exist_ok=True)
+    (ws_path / "subdir" / "old.txt").write_text("old")
+    
+    # 4. Run sync
+    # We need to run sync from within the workspace (or base).
+    # And we need to ensure it picks up the config with `workspace_expand_folder`.
+    # If we run from ws_path, `load_config` should find `workspace.json` in base_path?
+    # `load_config` logic:
+    # It looks for `workspace.json` in current dir.
+    # If not found, it checks if we are in a workspace structure and looks in base path?
+    # Let's check `config.py` logic.
+    # If `config.py` doesn't support looking in base path, we might need to copy config or symlink it?
+    # Or `create` command should have created a config in the new workspace?
+    # `create` command: `save_config(config, save_path)` where save_path is CWD/workspace.json.
+    # If we ran create from base_workspace, it saved config there.
+    # But new workspace doesn't have it.
+    
+    # Let's manually put config in new workspace for now, or rely on `load_config` finding it if it searches up?
+    # Usually `workspace.json` is at the root of the project (parent of base_ws)?
+    # No, `base_path` points to Base Workspace.
+    # Config is usually IN the Base Workspace or the Root?
+    # `doc.md` says `workspace.json` is in the root of the workspace folder?
+    # "Configuration: workspace.json ... may still hold preferences".
+    
+    # Let's assume we copy the config to the new workspace or it's shared.
+    # For this test, let's write config to ws_path.
+    with open(ws_path / "workspace.json", "w") as f:
+        json.dump(config_data, f)
         
-        # So in our test setup:
-        # We should name workspaces 'base' and 'base-ws2'.
-        # Let's rename ws1 to 'base' and ws2 to 'base-ws2'.
-        
-        os.chdir(cwd) # Move back first
-        
-        new_ws1 = base_dir / "base"
-        ws1.rename(new_ws1)
-        ws1 = new_ws1
-        
-        # Update config
-        config.base_path = ws1
-        
-        os.chdir(ws1)
-        
-        # Run sync
-        sync_rules(config)
-        
-        # Verify ws1 (current)
-        assert (ws1 / "config.json").exists()
-        assert (ws1 / "config.json").read_text() == '{"foo": "bar"}'
-        assert (ws1 / "subdir" / "script.py").exists()
-        
-        # Verify ws2 (sibling)
-        assert (ws2 / "config.json").exists()
-        assert (ws2 / "config.json").read_text() == '{"foo": "bar"}'
-        assert (ws2 / "subdir" / "script.py").exists()
-        assert not (ws2 / "subdir" / "old.txt").exists()
-        
-    finally:
-        os.chdir(cwd)
+    # Run sync
+    result = run_cli(["sync"], cwd=ws_path)
+    assert result.returncode == 0, f"Sync failed: {result.stdout}\n{result.stderr}"
+    
+    # 5. Verify Expansion
+    assert (ws_path / "config.json").read_text() == '{"foo": "bar"}'
+    assert (ws_path / "subdir" / "script.py").exists()
+    # old.txt should be gone if we delete existing target_path (which is subdir)
+    # The logic: `if target_path.exists(): shutil.rmtree(target_path)`
+    # target_path is `subdir`. So `subdir` is removed and recreated.
+    # So `old.txt` should be gone.
+    assert not (ws_path / "subdir" / "old.txt").exists()

@@ -2,18 +2,90 @@ import pytest
 import time
 import subprocess
 from pathlib import Path
-import threading
+import shutil
+
+def test_create_workspace(base_workspace, run_cli):
+    """Test creating a new workspace."""
+    # 1. Create workspace
+    result = run_cli(["create", "feature1", "--base", str(base_workspace)])
+    assert result.returncode == 0, f"Create failed: {result.stdout}\n{result.stderr}"
+    
+    ws_path = base_workspace.parent / "base-ws-feature1"
+    assert ws_path.exists()
+    assert (ws_path / ".git").is_file() # It's a worktree, so .git is a file
+    
+    # Check submodule
+    backend_path = ws_path / "backend"
+    assert backend_path.exists()
+    assert (backend_path / "backend.txt").exists()
+
+def test_sync_command(base_workspace, run_cli):
+    """Test the sync command."""
+    # 1. Create feature workspace
+    run_cli(["create", "feature1", "--base", str(base_workspace)])
+    ws_path = base_workspace.parent / "base-ws-feature1"
+    
+    # 2. Simulate remote update
+    # We need to update remote-main and remote-backend
+    test_dir = base_workspace.parent
+    remote_backend = test_dir / "remote-backend"
+    
+    # Clone backend to push update
+    backend_update = test_dir / "backend-update"
+    subprocess.run(["git", "clone", str(remote_backend), str(backend_update)], check=True)
+    (backend_update / "new_feature.txt").write_text("feature v1")
+    subprocess.run(["git", "add", "."], cwd=backend_update, check=True)
+    subprocess.run(["git", "commit", "-m", "add feature"], cwd=backend_update, check=True)
+    subprocess.run(["git", "push"], cwd=backend_update, check=True)
+    
+    # Update remote-main to point to new backend
+    # Clone remote-main
+    main_update = test_dir / "main-update"
+    subprocess.run(["git", "clone", str(test_dir / "remote-main"), str(main_update)], check=True)
+    # Update submodule
+    subprocess.run(["git", "submodule", "update", "--init", "--remote"], cwd=main_update, check=True)
+    subprocess.run(["git", "add", "backend"], cwd=main_update, check=True)
+    subprocess.run(["git", "commit", "-m", "update backend pointer"], cwd=main_update, check=True)
+    subprocess.run(["git", "push"], cwd=main_update, check=True)
+    
+    # Create workspace.json in feature workspace (or base)
+    # The sync command needs config.
+    import json
+    config = {
+        "base_path": str(base_workspace),
+        "repos": [] # Auto-discovery should work if we don't provide repos? 
+                    # Actually sync_workspaces uses config.repos.
+                    # If we leave it empty, it won't sync submodules unless we populate it.
+                    # But wait, sync_workspaces logic:
+                    # 1. Update Base (pull main, submodule update)
+                    # 2. Update Siblings (merge main, submodule update)
+                    # It doesn't explicitly iterate config.repos for git operations on siblings, 
+                    # except maybe for logging or specific repo logic?
+                    # Let's check sync.py.
+                    # sync_workspaces iterates parent_dir.iterdir().
+                    # It calls submodule_update(path).
+                    # It doesn't use config.repos for the main sync logic.
+                    # So empty repos list is fine.
+    }
+    with open(ws_path / "workspace.json", "w") as f:
+        json.dump(config, f)
+
+    # 3. Run sync in feature workspace
+    # We need to run from within the workspace
+    result = run_cli(["sync"], cwd=ws_path)
+    assert result.returncode == 0, f"Sync failed: {result.stdout}\n{result.stderr}"
+    
+    # 4. Verify feature workspace has update
+    assert (ws_path / "backend" / "new_feature.txt").exists()
 
 def test_preview_sync(base_workspace, run_cli):
+    """Test preview sync."""
     # 1. Create workspace
-    run_cli(["create", "feature1"])
+    run_cli(["create", "feature1", "--base", str(base_workspace)])
     ws_path = base_workspace.parent / "base-ws-feature1"
-    repo_path = ws_path / "repo1"
+    backend_path = ws_path / "backend"
     
     # 2. Start preview in background
-    # We need to run this in a thread or subprocess that we can kill
-    # But run_cli uses subprocess.run which blocks.
-    # Let's use Popen directly for this test
     import sys
     import os
     env = os.environ.copy()
@@ -22,7 +94,7 @@ def test_preview_sync(base_workspace, run_cli):
     
     proc = subprocess.Popen(
         cmd,
-        cwd=base_workspace,
+        cwd=base_workspace, # Run from base workspace (or anywhere)
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -31,96 +103,25 @@ def test_preview_sync(base_workspace, run_cli):
     
     try:
         # Wait for watcher to start
-        time.sleep(2)
+        time.sleep(3)
         
-        # 3. Create a file in feature workspace
-        new_file = repo_path / "new_file.txt"
-        new_file.write_text("hello")
+        # 3. Create a file in feature workspace (Uncommitted)
+        new_file = backend_path / "preview_test.txt"
+        new_file.write_text("hello preview")
         
         # Wait for sync
-        time.sleep(2)
+        time.sleep(3)
         
         # 4. Verify file exists in base workspace (preview target)
-        # Note: The sync logic syncs to base_workspace/repo1
-        # But wait, does it sync to a preview branch?
-        # sync.py: 
-        #   checkout_new_branch(target_repo_path, preview_branch, force=True)
-        #   shutil.copy2(src_file, dst_file)
-        
-        # So the file should be in base_workspace/repo1
-        # 4. Verify file exists in base workspace (preview target)
-        target_file = base_workspace / "repo1" / "new_file.txt"
+        target_file = base_workspace / "backend" / "preview_test.txt"
         assert target_file.exists()
-        assert target_file.read_text() == "hello"
+        assert target_file.read_text() == "hello preview"
+        
+        # Verify base workspace backend is on preview branch
+        # We can check with git
+        res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_workspace/"backend", capture_output=True, text=True)
+        assert res.stdout.strip() == "preview"
         
     finally:
         proc.terminate()
         proc.wait()
-
-def test_sync_rules(base_workspace, run_cli):
-    # Setup rules repo in config
-    import json
-    config_path = base_workspace.parent / "workspace.json"
-    with open(config_path) as f:
-        config = json.load(f)
-    
-    # Create rules repo
-    rules_repo = base_workspace / "rules"
-    rules_repo.mkdir()
-    subprocess.run(["git", "init"], cwd=rules_repo, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=rules_repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test User"], cwd=rules_repo, check=True)
-    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=rules_repo, check=True)
-    
-    # Add remote (simulate origin)
-    origin_rules = base_workspace.parent / "origin_rules"
-    origin_rules.mkdir()
-    subprocess.run(["git", "init", "--bare"], cwd=origin_rules, check=True)
-    subprocess.run(["git", "remote", "add", "origin", str(origin_rules)], cwd=rules_repo, check=True)
-    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=rules_repo, check=True) # master or main? git init default depends on version
-    
-    # Update config
-    config["repos"].append({"name": "rules", "path": "rules"})
-    config["rules_repo"] = "rules"
-    with open(config_path, "w") as f:
-        json.dump(config, f)
-        
-    # Create feature workspace
-    result = run_cli(["create", "feature1"])
-    assert result.returncode == 0, f"Create failed: {result.stdout}\n{result.stderr}"
-    
-    ws_path = base_workspace.parent / "base-ws-feature1"
-    rules_ws_path = ws_path / "rules"
-    
-    assert rules_ws_path.exists(), "Rules repo not created in feature workspace"
-    
-    # Modify rules in feature workspace
-    (rules_ws_path / "rule.txt").write_text("new rule")
-    
-    # Run syncrule from feature workspace
-    # We need to change cwd to feature workspace
-    import sys
-    import os
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path.cwd())
-    cmd = [sys.executable, "-m", "workspace_cli.main", "syncrule"]
-    
-    result = subprocess.run(
-        cmd,
-        cwd=ws_path, # Run from feature workspace
-        env=env,
-        capture_output=True,
-        text=True
-    )
-    
-    assert result.returncode == 0, f"Sync failed: {result.stdout}\n{result.stderr}"
-    
-    # Verify pushed to origin
-    # Clone origin to check
-    check_dir = base_workspace.parent / "check_rules"
-    if check_dir.exists():
-        import shutil
-        shutil.rmtree(check_dir)
-    subprocess.run(["git", "clone", str(origin_rules), str(check_dir)], check=True)
-    
-    assert (check_dir / "rule.txt").exists()
