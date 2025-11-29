@@ -111,9 +111,11 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
                 
                 checkout_new_branch(target_repo_path, preview_branch, force=True)
                 
-                # Clean target
                 run_git_cmd(["clean", "-fd"], target_repo_path)
-                run_git_cmd(["restore", "."], target_repo_path)
+                try:
+                    run_git_cmd(["restore", "."], target_repo_path)
+                except GitError:
+                    pass
                 
                 if not changed_files:
                     print(f"  No changes in {repo.name}")
@@ -295,7 +297,7 @@ def sync_rules(config: WorkspaceConfig) -> None:
     
     current_workspace_path = None
     for parent in [cwd] + list(cwd.parents):
-        if parent.name.startswith(f"{base_name}-") and parent.parent == config.base_path.parent:
+        if (parent.name == base_name or parent.name.startswith(f"{base_name}-")) and parent.parent == config.base_path.parent:
             current_workspace_path = parent
             break
     
@@ -345,3 +347,60 @@ def sync_rules(config: WorkspaceConfig) -> None:
                         
     except GitError as e:
         print(f"Git error during sync: {e}")
+
+    # 4. Handle workspace_expand_folder
+    if config.workspace_expand_folder:
+        expand_folder_name = config.workspace_expand_folder
+        source_expand_path = source_rules_path / expand_folder_name
+        
+        if not source_expand_path.exists():
+            print(f"Expand folder '{expand_folder_name}' not found in rules repo.")
+            return
+
+        print(f"Expanding content from '{expand_folder_name}' to all workspaces...")
+        
+        # Get list of items to expand
+        items_to_expand = list(source_expand_path.iterdir())
+        if not items_to_expand:
+            print(f"No items found in '{expand_folder_name}'.")
+            return
+
+        # Identify all workspaces (including current)
+        workspaces = []
+        parent_dir = config.base_path.parent
+        for path in parent_dir.iterdir():
+            if path.is_dir() and (path.name == base_name or path.name.startswith(f"{base_name}-")):
+                workspaces.append(path)
+        
+        # Also include the base workspace if it follows the naming convention or is the base path?
+        # The config.base_path is usually the target workspace path in some contexts, 
+        # but here we are iterating over siblings.
+        # Let's assume the standard workspace structure.
+        
+        for ws_path in workspaces:
+            ws_name = ws_path.name[len(base_name)+1:]
+            print(f"  Expanding to workspace: {ws_name}")
+            
+            for item in items_to_expand:
+                # We only care about the name relative to expand folder
+                rel_name = item.name
+                target_path = ws_path / rel_name
+                
+                try:
+                    # 1. Delete existing
+                    if target_path.exists():
+                        if target_path.is_dir():
+                            shutil.rmtree(target_path)
+                        else:
+                            target_path.unlink()
+                        # print(f"    Deleted existing {rel_name}")
+                    
+                    # 2. Copy new
+                    if item.is_dir():
+                        shutil.copytree(item, target_path)
+                    else:
+                        shutil.copy2(item, target_path)
+                    print(f"    Expanded: {rel_name}")
+                    
+                except Exception as e:
+                    print(f"    Error expanding {rel_name} to {ws_name}: {e}")
