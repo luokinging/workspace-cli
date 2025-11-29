@@ -1,10 +1,8 @@
 {
   "base_path": "/Users/luoking/Desktop/Project/Luoking/workspace-cli/e2e_manual_test_env/base-ws",
-  "repos": [
-    {
-      "name": "backend",
-      "path": "backend",
-      "url": null
+  "workspaces": {
+    "feature-a": {
+      "path": "/Users/luoking/Desktop/Project/Luoking/workspace-cli/e2e_manual_test_env/base-ws-feature-a"
     }
-  ]
+  }
 }

@@ -1,8 +1,9 @@
 import shutil
 from pathlib import Path
 from typing import List
-from workspace_cli.models import WorkspaceConfig, RepoConfig
+from workspace_cli.models import WorkspaceConfig, RepoConfig, WorkspaceEntry
 from workspace_cli.utils.git import create_worktree, remove_worktree, GitError, submodule_update
+from workspace_cli.config import save_config
 
 class WorkspaceError(Exception):
     pass
@@ -34,6 +35,19 @@ def create_workspace(name: str, config: WorkspaceConfig) -> None:
         raise WorkspaceError(f"Failed to initialize submodules: {e}")
 
     print(f"Workspace '{name}' created successfully at {workspace_path}")
+    
+    # 4. Update Config
+    config.workspaces[name] = WorkspaceEntry(path=str(workspace_path))
+    save_config(config, Path.cwd() / "workspace.json") # Assuming cwd is correct place? Or config.base_path.parent?
+    # We should probably save to where we loaded from, but we don't have that path here easily unless we pass it.
+    # For now, let's assume we save to base_path/workspace.json or similar.
+    # Actually, config.py load_config searches.
+    # Let's assume standard location: base_path/workspace.json? 
+    # Or better, we should pass the config path to create_workspace or save_config.
+    # Let's try to save to base_path / "workspace.json" for now as default.
+    save_path = config.base_path / "workspace.json"
+    save_config(config, save_path)
+    print(f"Updated config at {save_path}")
 
 def delete_workspace(name: str, config: WorkspaceConfig) -> None:
     """Delete a workspace."""
@@ -53,6 +67,13 @@ def delete_workspace(name: str, config: WorkspaceConfig) -> None:
              shutil.rmtree(workspace_path)
 
     print(f"Workspace '{name}' deleted.")
+    
+    # 2. Update Config
+    if name in config.workspaces:
+        del config.workspaces[name]
+        save_path = config.base_path / "workspace.json"
+        save_config(config, save_path)
+        print(f"Updated config at {save_path}")
 
 def get_status(config: WorkspaceConfig) -> None:
     """Print status of workspaces."""
@@ -63,7 +84,5 @@ def get_status(config: WorkspaceConfig) -> None:
     print(f"Base Workspace: {base_name} ({config.base_path})")
     print("Workspaces:")
     
-    for path in parent_dir.iterdir():
-        if path.is_dir() and path.name.startswith(f"{base_name}-") and path.name != base_name:
-            ws_name = path.name[len(base_name)+1:]
-            print(f"  - {ws_name} ({path})")
+    for name, entry in config.workspaces.items():
+        print(f"  - {name} ({entry.path})")
