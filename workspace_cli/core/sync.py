@@ -81,6 +81,149 @@ def _get_current_workspace_path(config: WorkspaceConfig) -> Optional[Path]:
     print(f"DEBUG: Base Parent={base_parent}")
     return None
 
+def clean_preview(config: WorkspaceConfig) -> None:
+    """Clean preview workspace: stop process, reset git, clean files."""
+    # 1. Stop Preview Process
+    pid_file = _get_pid_file(config)
+    _check_pid_file(pid_file) 
+    _remove_pid_file(pid_file)
+
+    target_workspace_path = config.base_path
+    print(f"Cleaning Base Workspace: {target_workspace_path}")
+
+    try:
+        # 2. Clean Base Workspace Root
+        run_git_cmd(["checkout", "main"], target_workspace_path)
+        run_git_cmd(["clean", "-fd"], target_workspace_path)
+        
+        # 3. Clean Submodules
+        repos = get_managed_repos(config.base_path)
+        for repo in repos:
+            repo_path = target_workspace_path / repo.path
+            if not repo_path.exists():
+                continue
+            
+            # print(f"  Cleaning repo: {repo.name}")
+            run_git_cmd(["checkout", "main"], repo_path)
+            # Delete preview branch if exists (it is always named 'preview' in submodules)
+            try:
+                run_git_cmd(["branch", "-D", "preview"], repo_path)
+            except GitError:
+                pass
+            run_git_cmd(["clean", "-fd"], repo_path)
+            
+    except GitError as e:
+        raise SyncError(f"Failed to clean preview: {e}")
+
+def rebuild_preview(workspace_name: str, config: WorkspaceConfig) -> None:
+    """Rebuild preview workspace content (git reset + file copy)."""
+    # 1. Identify Source and Preview Workspaces
+    if workspace_name not in config.workspaces:
+            raise SyncError(f"Workspace '{workspace_name}' not found in config.")
+            
+    # Resolve path from config
+    ws_entry = config.workspaces[workspace_name]
+    # Handle relative path
+    if not Path(ws_entry.path).is_absolute():
+        source_workspace_path = (config.base_path / ws_entry.path).resolve()
+    else:
+        source_workspace_path = Path(ws_entry.path).resolve()
+
+    target_workspace_path = config.base_path
+    
+    if not source_workspace_path.exists():
+        raise SyncError(f"Source workspace not found: {source_workspace_path}")
+        
+    print(f"Source: {source_workspace_path}")
+    print(f"Target: {target_workspace_path}")
+    
+    # 1.5 Sync Root Workspace Branch
+    print(f"Syncing Root Workspace...")
+    try:
+        # Update target to origin/main info (fetch)
+        fetch_remote(target_workspace_path)
+        target_main_commit = get_commit_hash(target_workspace_path, "origin/main")
+        
+        # Source commit
+        source_commit = get_commit_hash(source_workspace_path, "HEAD")
+        
+        # Common Root
+        # Since they are worktrees, they share objects, so we can find merge base directly.
+        common_root = get_merge_base(target_workspace_path, source_commit, target_main_commit)
+        print(f"  Root Common root: {common_root[:7]}")
+        
+        # Checkout Preview Branch
+        preview_branch = f"{workspace_name}/preview"
+        run_git_cmd(["checkout", "-B", preview_branch, common_root], target_workspace_path)
+        print(f"  Switched Root to branch: {preview_branch}")
+        
+    except GitError as e:
+            print(f"  Git Error in Root: {e}")
+            raise SyncError(f"Sync failed for Root Workspace: {e}")
+
+    # 2. Iterate over repos (submodules)
+    repos = get_managed_repos(config.base_path)
+    for repo in repos:
+        source_repo_path = source_workspace_path / repo.path
+        target_repo_path = target_workspace_path / repo.path
+        
+        if not source_repo_path.exists():
+            print(f"Skipping {repo.name}: Source not found.")
+            continue
+            
+        print(f"Syncing repo: {repo.name}")
+        
+        try:
+            # 2.1 Target Side: Update to latest main
+            print(f"  Updating target {repo.name} to origin/main...")
+            fetch_remote(target_repo_path)
+            merge_branch(target_repo_path, "origin/main")
+            target_main_commit = get_commit_hash(target_repo_path, "HEAD")
+
+            # 2.2 Source Side: Get current commit
+            source_commit = get_commit_hash(source_repo_path, "HEAD")
+
+            # 2.3 Find Common Root
+            # Let's try to fetch from source repo into target repo to ensure we have the objects.
+            print(f"  Fetching objects from source submodule...")
+            run_git_cmd(["fetch", str(source_repo_path)], target_repo_path)
+            
+            # Now we can find merge base
+            common_root = get_merge_base(target_repo_path, source_commit, target_main_commit)
+            print(f"  Common root: {common_root[:7]}")
+
+            # 2.4 Prepare Preview Branch in Target
+            preview_branch = "preview"
+            # Reset to common root
+            # checkout -B preview <common_root>
+            run_git_cmd(["checkout", "-B", preview_branch, common_root], target_repo_path)
+            
+            # 2.5 Sync Files (Copy)
+            source_files = run_git_cmd(["ls-files"], source_repo_path).splitlines()
+            untracked_files = run_git_cmd(["ls-files", "--others", "--exclude-standard"], source_repo_path).splitlines()
+            all_files = source_files + untracked_files
+            
+            print(f"  Syncing {len(all_files)} files...")
+            for file_rel_path in all_files:
+                src_file = source_repo_path / file_rel_path
+                dst_file = target_repo_path / file_rel_path
+                
+                if src_file.exists():
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+            
+            # What about deleted files?
+            target_files = run_git_cmd(["ls-files"], target_repo_path).splitlines()
+            for file_rel_path in target_files:
+                src_file = source_repo_path / file_rel_path
+                dst_file = target_repo_path / file_rel_path
+                if not src_file.exists() and dst_file.exists():
+                    dst_file.unlink()
+
+        except GitError as e:
+            print(f"  Git Error in {repo.name}: {e}")
+            raise SyncError(f"Sync failed for {repo.name}")
+
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     """Initialize preview workspace."""
     typer.secho(f"Initializing preview for workspace: {workspace_name}", fg=typer.colors.BLUE)
@@ -90,150 +233,7 @@ def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     _create_pid_file(pid_file)
 
     try:
-        # 1. Identify Source and Preview Workspaces
-        if workspace_name not in config.workspaces:
-             raise SyncError(f"Workspace '{workspace_name}' not found in config.")
-             
-        # Resolve path from config
-        ws_entry = config.workspaces[workspace_name]
-        # Handle relative path
-        if not Path(ws_entry.path).is_absolute():
-            source_workspace_path = (config.base_path / ws_entry.path).resolve()
-        else:
-            source_workspace_path = Path(ws_entry.path).resolve()
-
-        target_workspace_path = config.base_path
-        
-        if not source_workspace_path.exists():
-            raise SyncError(f"Source workspace not found: {source_workspace_path}")
-            
-        print(f"Source: {source_workspace_path}")
-        print(f"Target: {target_workspace_path}")
-        
-        print(f"Target: {target_workspace_path}")
-        
-        # 1.5 Sync Root Workspace Branch
-        print(f"Syncing Root Workspace...")
-        try:
-            # Update target to origin/main info (fetch)
-            fetch_remote(target_workspace_path)
-            target_main_commit = get_commit_hash(target_workspace_path, "origin/main")
-            
-            # Source commit
-            source_commit = get_commit_hash(source_workspace_path, "HEAD")
-            
-            # Common Root
-            # Since they are worktrees, they share objects, so we can find merge base directly.
-            common_root = get_merge_base(target_workspace_path, source_commit, target_main_commit)
-            print(f"  Root Common root: {common_root[:7]}")
-            
-            # Checkout Preview Branch
-            preview_branch = f"{workspace_name}/preview"
-            run_git_cmd(["checkout", "-B", preview_branch, common_root], target_workspace_path)
-            print(f"  Switched Root to branch: {preview_branch}")
-            
-        except GitError as e:
-             print(f"  Git Error in Root: {e}")
-             raise SyncError(f"Sync failed for Root Workspace: {e}")
-
-        # 2. Iterate over repos (submodules)
-        repos = get_managed_repos(config.base_path)
-        for repo in repos:
-            source_repo_path = source_workspace_path / repo.path
-            target_repo_path = target_workspace_path / repo.path
-            
-            if not source_repo_path.exists():
-                print(f"Skipping {repo.name}: Source not found.")
-                continue
-                
-            print(f"Syncing repo: {repo.name}")
-            
-            try:
-                # 2.1 Target Side: Update to latest main
-                print(f"  Updating target {repo.name} to origin/main...")
-                fetch_remote(target_repo_path)
-                merge_branch(target_repo_path, "origin/main")
-                target_main_commit = get_commit_hash(target_repo_path, "HEAD")
-
-                # 2.2 Source Side: Get current commit
-                source_commit = get_commit_hash(source_repo_path, "HEAD")
-
-                # 2.3 Find Common Root
-                common_root = get_merge_base(target_repo_path, source_commit, target_main_commit) # Wait, need source commit in target repo?
-                # Git merge-base requires both commits to be present in the repo.
-                # Since source and target are different worktrees/clones, they might not have each other's objects if not pushed.
-                # BUT, here we assume they share the same remote.
-                # If source has local commits not pushed, target won't know them.
-                # So we can only find common root based on what target knows.
-                # Actually, if we use file sync, we don't strictly need the common root for git operations IF we just overwrite files.
-                # BUT the requirement says: "Reset to Common Root".
-                # If Source has local commits, Target can't reset to them.
-                # Target can only reset to a commit it has.
-                # If Source hasn't pushed, Target only has origin/main.
-                # So Common Root is likely origin/main (or whatever Source branched from).
-                
-                # Issue: `git merge-base` needs both commits in the SAME repo object database.
-                # If these are separate clones, they don't share objects.
-                # If they are worktrees of the same repo, they share objects!
-                # Are submodules worktrees? Usually no, they are separate .git dirs inside the parent worktree.
-                # UNLESS we set them up as worktrees too? No, standard submodules are separate clones (or share .git/modules).
-                # If they share .git/modules, they might share objects.
-                
-                # Assumption: Submodules are standard.
-                # If we can't find the source commit in target, we fallback to target's HEAD (main)?
-                # Or we fetch source's objects into target?
-                # `git fetch source_repo_path`?
-                
-                # Let's try to fetch from source repo into target repo to ensure we have the objects.
-                print(f"  Fetching objects from source submodule...")
-                run_git_cmd(["fetch", str(source_repo_path)], target_repo_path)
-                
-                # Now we can find merge base
-                common_root = get_merge_base(target_repo_path, source_commit, target_main_commit)
-                print(f"  Common root: {common_root[:7]}")
-
-                # 2.4 Prepare Preview Branch in Target
-                preview_branch = "preview"
-                # Reset to common root
-                # checkout -B preview <common_root>
-                run_git_cmd(["checkout", "-B", preview_branch, common_root], target_repo_path)
-                
-                # 2.5 Sync Files (Copy)
-                # We want to copy ALL tracked files from source to target.
-                # Or just copy everything excluding ignored?
-                # `shutil.copytree` with `dirs_exist_ok=True` copies everything.
-                # We should respect .gitignore.
-                # A simple way: `git ls-files` in source, then copy those.
-                
-                source_files = run_git_cmd(["ls-files"], source_repo_path).splitlines()
-                # Also need to handle untracked but not ignored?
-                # `git ls-files --others --exclude-standard`
-                untracked_files = run_git_cmd(["ls-files", "--others", "--exclude-standard"], source_repo_path).splitlines()
-                all_files = source_files + untracked_files
-                
-                print(f"  Syncing {len(all_files)} files...")
-                for file_rel_path in all_files:
-                    src_file = source_repo_path / file_rel_path
-                    dst_file = target_repo_path / file_rel_path
-                    
-                    if src_file.exists():
-                        dst_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_file, dst_file)
-                
-                # What about deleted files?
-                # If file exists in Target (from Common Root) but not in Source, it should be deleted.
-                # We can list files in Target (current preview branch) and check if they exist in Source.
-                target_files = run_git_cmd(["ls-files"], target_repo_path).splitlines()
-                for file_rel_path in target_files:
-                    src_file = source_repo_path / file_rel_path
-                    dst_file = target_repo_path / file_rel_path
-                    if not src_file.exists() and dst_file.exists():
-                        dst_file.unlink()
-                        # print(f"    Deleted: {file_rel_path}")
-
-            except GitError as e:
-                print(f"  Git Error in {repo.name}: {e}")
-                raise SyncError(f"Sync failed for {repo.name}")
+        rebuild_preview(workspace_name, config)
     except Exception:
         _remove_pid_file(pid_file)
         raise

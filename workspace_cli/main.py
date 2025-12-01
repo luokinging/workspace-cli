@@ -144,7 +144,7 @@ def preview(
                 
                 # Check if cwd is inside ws_path
                 try:
-                    cwd.relative_to(ws_path)
+                    Path.cwd().relative_to(ws_path)
                     current_workspace_name = name
                     break
                 except ValueError:
@@ -163,8 +163,25 @@ def preview(
         raise typer.Exit(code=1)
 
 @app.command()
+def clean_preview():
+    """
+    Clean preview workspace.
+    
+    Stops any running preview process, resets the base workspace to main,
+    and removes untracked files.
+    """
+    try:
+        config = load_config()
+        sync_core.clean_preview(config)
+        typer.secho("Preview workspace cleaned.", fg=typer.colors.GREEN)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
+
+@app.command()
 def sync(
-    all: bool = typer.Option(False, "--all", help="Sync all workspaces (current + siblings)")
+    all: bool = typer.Option(False, "--all", help="Sync all workspaces (current + siblings)"),
+    rebuild_preview: bool = typer.Option(True, "--rebuild-preview/--no-rebuild-preview", help="Clean and rebuild preview after sync")
 ):
     """
     Sync workspaces.
@@ -172,17 +189,40 @@ def sync(
     By default, syncs only the current workspace (pulls from origin).
     Use --all to sync all workspaces (Base + Siblings).
     
-    Example:
-    
-    # Sync current workspace
-    $ workspace sync
-    
-    # Sync all workspaces
-    $ workspace sync --all
+    If --rebuild-preview is set (default), it will also:
+    1. Clean the preview workspace (stop process, reset to main).
+    2. Perform the git sync.
+    3. Rebuild the preview content (if inside a workspace).
     """
     try:
         config = load_config()
+        
+        if rebuild_preview:
+            sync_core.clean_preview(config)
+            
         sync_core.sync_workspaces(config, sync_all=all)
+        
+        if rebuild_preview:
+             # Detect workspace to rebuild preview for
+            current_workspace_name = None
+            for name, entry in config.workspaces.items():
+                if not Path(entry.path).is_absolute():
+                    ws_path = (config.base_path / entry.path).resolve()
+                else:
+                    ws_path = Path(entry.path).resolve()
+                
+                try:
+                    Path.cwd().relative_to(ws_path)
+                    current_workspace_name = name
+                    break
+                except ValueError:
+                    continue
+            
+            if current_workspace_name:
+                typer.secho(f"Rebuilding preview for {current_workspace_name}...", fg=typer.colors.BLUE)
+                sync_core.rebuild_preview(current_workspace_name, config)
+                typer.secho("Preview rebuilt.", fg=typer.colors.GREEN)
+
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
