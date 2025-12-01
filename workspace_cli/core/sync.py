@@ -81,6 +81,23 @@ def _get_current_workspace_path(config: WorkspaceConfig) -> Optional[Path]:
     print(f"DEBUG: Base Parent={base_parent}")
     return None
 
+def _force_clean_repo(repo_path: Path, target_branch: str = "main"):
+    """Force clean a repo: checkout target_branch, reset --hard, clean -fd."""
+    try:
+        # If we are already on target_branch, this is a no-op, but good to ensure.
+        # If we are on another branch, this switches.
+        run_git_cmd(["checkout", target_branch], repo_path)
+    except GitError:
+        # If checkout fails (e.g. branch doesn't exist?), we might be in trouble.
+        # But let's try to proceed with reset/clean on current HEAD if checkout failed?
+        # Or maybe we are in detached HEAD.
+        pass
+        
+    # Reset hard to HEAD (clears modified tracked files)
+    run_git_cmd(["reset", "--hard"], repo_path)
+    # Clean untracked files
+    run_git_cmd(["clean", "-fd"], repo_path)
+
 def clean_preview(config: WorkspaceConfig) -> None:
     """Clean preview workspace: stop process, reset git, clean files."""
     # 1. Stop Preview Process
@@ -93,8 +110,7 @@ def clean_preview(config: WorkspaceConfig) -> None:
 
     try:
         # 2. Clean Base Workspace Root
-        run_git_cmd(["checkout", "main"], target_workspace_path)
-        run_git_cmd(["clean", "-fd"], target_workspace_path)
+        _force_clean_repo(target_workspace_path, "main")
         
         # 3. Clean Submodules
         repos = get_managed_repos(config.base_path)
@@ -104,13 +120,13 @@ def clean_preview(config: WorkspaceConfig) -> None:
                 continue
             
             # print(f"  Cleaning repo: {repo.name}")
-            run_git_cmd(["checkout", "main"], repo_path)
+            _force_clean_repo(repo_path, "main")
+            
             # Delete preview branch if exists (it is always named 'preview' in submodules)
             try:
                 run_git_cmd(["branch", "-D", "preview"], repo_path)
             except GitError:
                 pass
-            run_git_cmd(["clean", "-fd"], repo_path)
             
     except GitError as e:
         raise SyncError(f"Failed to clean preview: {e}")
@@ -140,6 +156,9 @@ def rebuild_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     # 1.5 Sync Root Workspace Branch
     print(f"Syncing Root Workspace...")
     try:
+        # Clean Root Workspace first
+        _force_clean_repo(target_workspace_path, "main")
+
         # Update target to origin/main info (fetch)
         fetch_remote(target_workspace_path)
         target_main_commit = get_commit_hash(target_workspace_path, "origin/main")
@@ -174,6 +193,9 @@ def rebuild_preview(workspace_name: str, config: WorkspaceConfig) -> None:
         print(f"Syncing repo: {repo.name}")
         
         try:
+            # Clean Target Repo first
+            _force_clean_repo(target_repo_path, "main")
+
             # 2.1 Target Side: Update to latest main
             print(f"  Updating target {repo.name} to origin/main...")
             fetch_remote(target_repo_path)

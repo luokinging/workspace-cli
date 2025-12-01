@@ -41,11 +41,13 @@ def test_clean_preview(mock_get_repos, mock_run_git, mock_remove_pid, mock_check
     # Check specific calls
     # Base workspace
     mock_run_git.assert_any_call(["checkout", "main"], mock_config.base_path)
+    mock_run_git.assert_any_call(["reset", "--hard"], mock_config.base_path)
     mock_run_git.assert_any_call(["clean", "-fd"], mock_config.base_path)
     
     # Repo
     repo_path = mock_config.base_path / "repo1"
     mock_run_git.assert_any_call(["checkout", "main"], repo_path)
+    mock_run_git.assert_any_call(["reset", "--hard"], repo_path)
     mock_run_git.assert_any_call(["clean", "-fd"], repo_path)
     # branch -D preview might be called
     mock_run_git.assert_any_call(["branch", "-D", "preview"], repo_path)
