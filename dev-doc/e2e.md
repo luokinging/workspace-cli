@@ -67,13 +67,31 @@
 2.  **执行 Preview**:
     - `workspace-cli preview`。
 3.  **验证**:
+
     - **Base Workspace (Target)**:
+
       - `backend` 子模块切换到了 `preview` 分支。
       - `backend/README.md` 内容已更新。
       - `git status` 显示 `backend` 是 clean 的 (因为文件是 Copy 过去的，且 Base 是基于 Common Root，如果 Source 未提交，Base 应该也是 Uncommitted? 不，Base 是 Copy 覆盖。如果 Base Reset 到 Common Root，Copy 后应该是 Modified 状态)。
       - _修正_: Preview 逻辑是 Reset 到 Common Root，然后 Copy 文件。所以 Base 中应该是 "Modified" 状态，且内容与 Source 一致。
 
-### Case 5: 切换 Workspace (Switch)
+      - _修正_: Preview 逻辑是 Reset 到 Common Root，然后 Copy 文件。所以 Base 中应该是 "Modified" 状态，且内容与 Source 一致。
+
+### Case 5: Clean Preview (Clean)
+
+**目标**: 验证 `clean-preview` 命令能够清理 Preview 环境。
+
+**步骤**:
+
+1.  **执行 Clean**:
+    - `workspace-cli clean-preview`。
+2.  **验证**:
+    - **Base Workspace**:
+      - `backend` 子模块切换回 `main` 分支。
+      - `preview` 分支被删除。
+      - `git status` 显示 clean (无 untracked files)。
+
+### Case 6: 切换 Workspace (Switch)
 
 **目标**: 验证 Preview 环境的清理和切换。
 
@@ -83,10 +101,13 @@
 2.  在 `feature-b` 做不同的修改。
 3.  执行 `workspace-cli preview --workspace feature-b`。
 4.  **验证**:
+
     - Base Workspace 的内容变成了 `feature-b` 的内容。
     - 之前的 `feature-a` 内容被清除。
 
-### Case 6: 删除 Workspace (Delete)
+    - 之前的 `feature-a` 内容被清除。
+
+### Case 7: 删除 Workspace (Delete)
 
 **目标**: 验证清理。
 

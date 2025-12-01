@@ -202,8 +202,41 @@ def test_preview(base_ws, ws_path):
         proc.terminate()
         proc.wait()
 
+def test_clean_preview(base_ws):
+    print("\n=== Case 5: Clean Preview ===")
+    run_cmd(CLI_CMD + ["clean-preview"], cwd=base_ws)
+    
+    # Verify Base Workspace
+    res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_ws, capture_output=True, text=True)
+    current_branch = res.stdout.strip()
+    
+    if current_branch == "main":
+        print(">>> VERIFICATION PASSED: Base Workspace switched back to main.")
+    else:
+        print(f">>> VERIFICATION FAILED: Expected main, got {current_branch}")
+        sys.exit(1)
+        
+    # Verify Submodule
+    backend_path = base_ws / "backend"
+    res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=backend_path, capture_output=True, text=True)
+    sub_branch = res.stdout.strip()
+    
+    if sub_branch == "main":
+        print(">>> VERIFICATION PASSED: Submodule switched back to main.")
+    else:
+        print(f">>> VERIFICATION FAILED: Submodule expected main, got {sub_branch}")
+        sys.exit(1)
+        
+    # Verify Clean Status
+    res = subprocess.run(["git", "status", "--porcelain"], cwd=base_ws, capture_output=True, text=True)
+    if not res.stdout.strip():
+        print(">>> VERIFICATION PASSED: Base Workspace is clean.")
+    else:
+        print(f">>> VERIFICATION FAILED: Base Workspace is dirty:\n{res.stdout}")
+        sys.exit(1)
+
 def test_delete(base_ws):
-    print("\n=== Case 6: Delete Workspace ===")
+    print("\n=== Case 7: Delete Workspace ===")
     run_cmd(CLI_CMD + ["delete", "feature-a"])
     
     ws_path = base_ws.parent / "base-ws-feature-a"
@@ -219,6 +252,7 @@ def main():
         ws_path = test_create(base_ws)
         test_sync(base_ws, ws_path)
         test_preview(base_ws, ws_path)
+        test_clean_preview(base_ws)
         test_delete(base_ws)
         print("\n=== ALL MANUAL SCENARIOS PASSED ===")
     except Exception as e:

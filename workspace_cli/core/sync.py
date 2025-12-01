@@ -1,5 +1,6 @@
 import shutil
 import time
+import threading
 import subprocess
 import os
 import signal
@@ -268,6 +269,12 @@ class Watcher(FileSystemEventHandler):
         self.source_root = source_root
         self.target_root = target_root
         self.repo_path = repo_path # Relative path of repo in workspace
+        
+        # Debounce state
+        self.debounce_interval = 1.0 # 1 second
+        self.pending_files = set()
+        self.lock = threading.Lock()
+        self.timer = None
 
     def _is_ignored(self, path: str) -> bool:
         try:
@@ -299,34 +306,59 @@ class Watcher(FileSystemEventHandler):
                 color = typer.colors.RED
             elif event_type == "UPDATED":
                 color = typer.colors.YELLOW
+            elif event_type == "BATCH":
+                color = typer.colors.BLUE
 
             if Path(src_path).exists():
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_path, dst_path)
-                typer.secho(f"[{event_type}] {rel_path}", fg=color)
+                if event_type != "BATCH":
+                    typer.secho(f"[{event_type}] {rel_path}", fg=color)
             else:
                 if dst_path.exists():
                     dst_path.unlink()
-                    typer.secho(f"[{event_type}] {rel_path}", fg=color)
+                    if event_type != "BATCH":
+                        typer.secho(f"[{event_type}] {rel_path}", fg=color)
         except Exception as e:
             print(f"Error syncing {src_path}: {e}")
 
+    def _schedule_sync(self, src_path: str):
+        with self.lock:
+            self.pending_files.add(src_path)
+            if self.timer:
+                self.timer.cancel()
+            self.timer = threading.Timer(self.debounce_interval, self._process_batch)
+            self.timer.start()
+
+    def _process_batch(self):
+        with self.lock:
+            paths = list(self.pending_files)
+            self.pending_files.clear()
+            self.timer = None
+        
+        if not paths:
+            return
+
+        typer.secho(f"Syncing batch of {len(paths)} files for {self.repo_path}...", fg=typer.colors.BLUE)
+        for src_path in paths:
+             self._sync_file(src_path, event_type="BATCH")
+
     def on_modified(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path, "UPDATED")
+            self._schedule_sync(event.src_path)
 
     def on_created(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path, "CREATED")
+            self._schedule_sync(event.src_path)
 
     def on_deleted(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path, "DELETED")
+            self._schedule_sync(event.src_path)
             
     def on_moved(self, event):
         if not event.is_directory:
-            self._sync_file(event.src_path, "DELETED")
-            self._sync_file(event.dest_path, "CREATED")
+            self._schedule_sync(event.src_path)
+            self._schedule_sync(event.dest_path)
 
 def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = False) -> None:
     """Start preview sync and watch."""
