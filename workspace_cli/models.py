@@ -10,9 +10,15 @@ class RepoConfig(BaseModel):
 class WorkspaceEntry(BaseModel):
     path: str  # Relative or absolute path
 
+class PreviewHooks(BaseModel):
+    before_clear: List[str] = []
+    after_preview: List[str] = []
+
 class WorkspaceConfig(BaseModel):
     base_path: Path
     workspaces: Dict[str, WorkspaceEntry] = {}
+    preview: List[str] = []
+    preview_hook: PreviewHooks = PreviewHooks()
 
 class Context(BaseModel):
     root_path: Path

@@ -179,6 +179,30 @@ def clean_preview():
         raise typer.Exit(code=1)
 
 @app.command()
+def run_preview():
+    """
+    Start the preview runner.
+    
+    Manages the preview lifecycle, including dev servers and hooks.
+    Must be run from the base workspace (preview workspace).
+    """
+    try:
+        config = load_config()
+        
+        # Verify we are in the base workspace
+        if config.base_path.resolve() != Path.cwd().resolve():
+            typer.secho(f"Error: run-preview must be executed in the base workspace: {config.base_path}", err=True, fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+            
+        from workspace_cli.core.runner import PreviewRunner
+        runner = PreviewRunner(config)
+        runner.start()
+        
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1)
+
+@app.command()
 def sync(
     all: bool = typer.Option(False, "--all", help="Sync all workspaces (current + siblings)"),
     rebuild_preview: bool = typer.Option(True, "--rebuild-preview/--no-rebuild-preview", help="Clean and rebuild preview after sync")

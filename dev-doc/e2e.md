@@ -117,3 +117,23 @@
 2.  **验证**:
     - 目录 `base-workspace-feature-a` 不存在。
     - `git worktree list` 中不再包含该 Worktree。
+
+### Case 8: Run Preview (Run-Preview)
+
+**目标**: 验证 `run-preview` 命令能够托管 Preview 生命周期，并响应 `preview` 命令的触发。
+
+**步骤**:
+
+1.  **配置**:
+    - 在 `workspace.json` 中添加 `preview` 命令 (e.g., `echo "Running Server"`) 和 hooks (e.g., `before_clear`: `echo "Before Clear"`).
+2.  **启动 Run Preview**:
+    - 在 Base Workspace 执行 `workspace-cli run-preview` (后台运行)。
+3.  **触发 Preview**:
+    - 在 Feature Workspace 执行 `workspace-cli preview`。
+4.  **验证**:
+    - `run-preview` 的输出显示它接收到了触发。
+    - `before_clear` hook 被执行。
+    - Preview 同步逻辑被执行。
+    - `preview` 命令被执行。
+5.  **停止**:
+    - 停止 `run-preview` 进程。

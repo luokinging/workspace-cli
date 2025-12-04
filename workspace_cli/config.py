@@ -62,7 +62,9 @@ def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
 
     return WorkspaceConfig(
         base_path=base_path,
-        workspaces=workspaces
+        workspaces=workspaces,
+        preview=data.get("preview", []),
+        preview_hook=data.get("preview_hook", {})
     )
 
 def save_config(config: WorkspaceConfig, path: Path) -> None:
@@ -72,7 +74,9 @@ def save_config(config: WorkspaceConfig, path: Path) -> None:
         "workspaces": {
             name: entry.model_dump() 
             for name, entry in config.workspaces.items()
-        }
+        },
+        "preview": config.preview,
+        "preview_hook": config.preview_hook.model_dump()
     }
     
     with open(path, "w") as f:

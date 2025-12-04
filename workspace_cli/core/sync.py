@@ -2,6 +2,7 @@ import shutil
 import time
 import threading
 import subprocess
+import socket
 import os
 import signal
 import typer
@@ -362,15 +363,41 @@ class Watcher(FileSystemEventHandler):
 
 def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = False) -> None:
     """Start preview sync and watch."""
-    try:
-        init_preview(workspace_name, config)
-    except SyncError as e:
-        typer.secho(str(e), err=True, fg=typer.colors.RED)
-        return
+    
+    # Check for active runner
+    port_file = config.base_path / ".run_preview.port"
+    runner_active = False
+    
+    if port_file.exists():
+        try:
+            port = int(port_file.read_text().strip())
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect(('127.0.0.1', port))
+                typer.secho(f"Connected to Preview Runner on port {port}", fg=typer.colors.GREEN)
+                
+                # Send trigger
+                s.sendall(f"PREVIEW {workspace_name}".encode())
+                
+                # Wait for ack
+                data = s.recv(1024)
+                if data == b"OK":
+                    typer.secho("Runner accepted trigger.", fg=typer.colors.GREEN)
+                    runner_active = True
+        except (ValueError, ConnectionRefusedError, OSError):
+            # Runner dead or file stale
+            pass
+
+    if not runner_active:
+        try:
+            init_preview(workspace_name, config)
+        except SyncError as e:
+            typer.secho(str(e), err=True, fg=typer.colors.RED)
+            return
 
     if once:
         typer.secho("Preview sync completed (once mode).", fg=typer.colors.GREEN)
-        _remove_pid_file(_get_pid_file(config))
+        if not runner_active:
+             _remove_pid_file(_get_pid_file(config))
         return
     
     if workspace_name not in config.workspaces:
