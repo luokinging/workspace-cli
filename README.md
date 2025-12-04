@@ -1,185 +1,257 @@
 # Workspace CLI
 
-Workspace CLI is a command-line tool for managing multiple Workspaces using a **Git-native** architecture. It treats the Workspace itself as a Git repository and manages child repositories as **Git Submodules**, providing an efficient, isolated, and easily synchronized development environment for AI-assisted development.
+Workspace CLI is a powerful command-line tool designed to streamline development in complex, multi-repository environments. It leverages a **Client-Server Architecture** and **Git Worktrees** to provide isolated development workspaces, efficient synchronization, and instant preview switching.
 
 ## 📖 Introduction
 
-The core goal of this project is to solve the problem of environment isolation and synchronization during parallel multi-task development. By assigning different development tasks to independent Workspaces (Git Worktrees), each Workspace has its own independent environment. At the same time, it provides a unified Preview Workspace for real-time preview and review, ensuring that changes during development can be accurately and quickly synchronized.
+In modern development, managing multiple feature branches and keeping them in sync with a shared preview environment can be challenging. Workspace CLI solves this by:
 
-### Core Features
+- **Isolating Environments**: Each feature gets its own Git Worktree, ensuring clean separation of dependencies and build artifacts.
+- **Unified Preview**: A single "Base Workspace" acts as the preview target. You can instantly switch the preview to any feature workspace without re-cloning or slow checkouts.
+- **Real-time Sync**: A background Daemon watches for file changes and syncs them to the preview environment instantly.
+- **Centralized Management**: A long-running Daemon manages the state of all workspaces, ensuring consistency and concurrency safety.
 
-- **Workspace as Repo**: The top-level Workspace is a Git repository. Child repositories are managed via `.gitmodules`.
-- **Git Worktree Isolation**: Each Workspace is a Git Worktree of the Base Workspace, ensuring efficient storage usage and fast creation.
-- **Unified Sync**: The `sync` command updates the current Workspace from remote. Use `--all` to update all Workspaces.
-- **Preview Workspace**: A single preview environment that supports accurate synchronization of code from any Workspace (syncing only Tracked files), ensuring a clean preview environment.
-- **Live Preview**: Automatically monitors file changes and synchronizes them to the Preview Workspace in real-time.
+## 🤖 Designed for AI & Parallel Development
 
-## 🛠️ Installation
+Workspace CLI is specifically architected to support **AI Agents** and **Parallel Development Workflows**:
 
-Ensure that Python 3.8+ and Git are installed in your environment.
+- **Multi-Repo Context**: By managing submodules (e.g., `frontend`, `backend`) within a single workspace, AI agents can view and modify the entire stack in one cohesive context, avoiding context switching overhead.
+- **Agent Isolation**: Multiple AI agents can work on different tasks (e.g., "Feature A", "Bugfix B") simultaneously in separate workspaces without interfering with each other or the stable Base Workspace.
+- **Safe Verification**: Agents can use the `preview` command to verify their changes in the Base Workspace (which mimics production) before submitting code, ensuring high-quality contributions.
+- **Concurrency Safety**: The Daemon ensures that even if multiple agents trigger commands simultaneously, the system remains consistent and race-free.
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.9+
+- Git installed and available in PATH
+
+### Installation
 
 ```bash
-pip install dev-ws
-```
-
-### Local Development Installation
-
-If you want to install from source for development:
-
-```bash
+# Install from source
 git clone https://github.com/your-repo/workspace-cli.git
 cd workspace-cli
 pip install -e .
 ```
 
-## 🚀 Quick Start
+### 1. Start the Daemon
 
-### 1. Setup Base Workspace
+The Daemon is the heart of Workspace CLI. It must be running for most commands to work.
 
-First, clone your main repository (which contains submodules) recursively. This will serve as your **Base Workspace**.
+```bash
+# Start in background (default port 8000)
+workspace daemon
+
+# Or run in foreground for debugging
+workspace daemon --foreground
+```
+
+### 2. Initialize Base Workspace
+
+Clone your main repository (recursively if it has submodules). This will be your **Base Workspace**.
 
 ```bash
 git clone --recursive https://github.com/your-org/main-repo.git base-workspace
 cd base-workspace
 ```
 
-### 2. Create Workspace
+### 3. Create a Feature Workspace
 
-Use the `create` command to create a new development Workspace (Worktree) based on the Base Workspace.
+Create a new isolated workspace for your feature.
 
 ```bash
-# Syntax
-workspace create <new_name>... [--base <base_path>]
-
-# Example: Create a feature workspace
-# Run this from within the Base Workspace or specify --base
-workspace create feature-a
-
-# Example: Create multiple workspaces
-workspace create feature-a feature-b feature-c
+# Create a workspace named 'A'
+workspace create A
 ```
 
-**Result**:
+This creates a sibling directory `../base-workspace-A` which is a Git Worktree of your base workspace.
 
-- A new directory `../base-workspace-feature-a` is created.
-- It is a Git Worktree of `base-workspace`.
-- Submodules are initialized and updated.
-- A `workspace.json` config is automatically generated if not present.
+### 4. Switch Preview
 
-### 3. Sync Workspaces
-
-Use the `sync` command to update workspaces with the latest changes from the remote repository.
+Instantly switch your Base Workspace to reflect the code in your feature workspace.
 
 ```bash
-# Sync current workspace (default)
-workspace sync
-
-# Sync all workspaces (Base + Siblings)
-workspace sync --all
-```
-
-**Result**:
-
-- **Current Workspace**: Pulls `origin/main` (rebase).
-- **With `--all`**:
-  - **Base Workspace**: Pulls `origin/main`.
-  - **Sibling Workspaces**: Merges `origin/main` into their current branch and updates submodules.
-
-### 4. Live Preview
-
-Use the `preview` command to sync changes from your current development workspace to the Base Workspace (Preview Environment) in real-time.
-
-```bash
-# Run from your feature workspace
+workspace preview --workspace A
+# OR (if inside the workspace directory)
 workspace preview
 ```
 
-**Result**:
-
-- **Base Workspace**: Switches submodules to a `preview` branch (reset to common root with feature workspace).
-- **Sync**: Copies tracked files from Feature Workspace to Base Workspace.
-- **Watch**: Monitors file changes and syncs them instantly.
-
-### 5. Run Preview (Optional)
-
-Use the `run-preview` command to manage the preview lifecycle (e.g., running dev servers) in the Base Workspace.
-
-```bash
-# Run from your Base Workspace
-workspace run-preview
-```
-
-- **Lifecycle**:
-  1.  Waits for `workspace preview` trigger from any Feature Workspace.
-  2.  **Before Clear**: Runs `preview_hook.before_clear` commands.
-  3.  **Clean & Sync**: Resets Base Workspace and syncs files.
-  4.  **Preview**: Runs `preview` commands (e.g., `npm run dev`) and `preview_hook.after_preview`.
-- **Note**: If `run-preview` is running, `workspace preview` will trigger it instead of performing a local sync.
-
-## 📚 Command Reference
-
-| Command       | Description                                      | Example                      |
-| :------------ | :----------------------------------------------- | :--------------------------- |
-| `create`      | Create a new Workspace (Git Worktree).           | `workspace create feature-a` |
-| `sync`        | Sync workspace from remote. Use `--all` for all. | `workspace sync`             |
-| `preview`     | Start live preview sync to Base Workspace.       | `workspace preview`          |
-| `run-preview` | Start preview runner in Base Workspace.          | `workspace run-preview`      |
-| `delete`      | Delete a Workspace and its worktree.             | `workspace delete feature-a` |
-| `status`      | View current status and list of workspaces.      | `workspace status`           |
+Your Base Workspace now contains the code from `A`, and the Daemon is watching for changes.
 
 ## ⚙️ Configuration
 
-`workspace.json` is the configuration file, usually located in the Base Workspace.
+The `workspace.json` file configures the behavior of your workspaces. It is typically located in the root of your Base Workspace.
 
 ```json
 {
-  "base_path": "/absolute/path/to/base/workspace",
+  "base_path": "/absolute/path/to/base-workspace",
   "workspaces": {
-    "feature-a": {
-      "path": "../base-workspace-feature-a"
+    "A": {
+      "path": "/absolute/path/to/base-workspace-A"
     }
   },
-  "preview": ["npm run dev"],
+  "preview": ["cd frontend && npm run dev"],
   "preview_hook": {
-    "before_clear": ["echo 'Cleaning up...'"],
-    "after_preview": ["echo 'Preview ready!'"]
+    "before_clear": ["rm -rf dist"],
+    "after_preview": ["echo 'Preview Ready'"]
   }
 }
 ```
 
-| Field          | Type   | Description                                                                        |
-| :------------- | :----- | :--------------------------------------------------------------------------------- |
-| `base_path`    | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this. |
-| `workspaces`   | Map    | Map of created workspaces (Name -> Path). Managed automatically by CLI.            |
-| `preview`      | List   | (Optional) List of commands to run during preview (e.g., dev server).              |
-| `preview_hook` | Map    | (Optional) Hooks: `before_clear`, `after_preview`.                                 |
+### Configuration Fields
 
-## 🏗️ Architecture
+| Field                        | Type      | Description                                                                            |
+| :--------------------------- | :-------- | :------------------------------------------------------------------------------------- |
+| `base_path`                  | String    | **Required**. Absolute path to the Base Workspace.                                     |
+| `workspaces`                 | Map       | Managed automatically. Maps workspace names to their paths.                            |
+| `preview`                    | List[Str] | Commands to run when starting the preview server (e.g., `cd frontend && npm run dev`). |
+| `preview_hook`               | Object    | Hooks for preview lifecycle.                                                           |
+| `preview_hook.before_clear`  | List[Str] | Commands to run before clearing the preview environment.                               |
+| `preview_hook.after_preview` | List[Str] | Commands to run after preview sync is complete.                                        |
 
-### Branch Strategy
+## 🔄 End-to-End Workflow Guide
 
-- **Base Workspace**: Usually on `main` branch. Acts as the source of truth and Preview Target.
-- **Feature Workspace**: Created as a Worktree.
-  - **Workspace Repo**: On `workspace-{name}/stand` branch.
-  - **Submodules**: On `main` or specific commits.
-- **Preview**:
-  - **Target Submodules**: Switched to `preview` branch (reset to common ancestor).
+This guide walks you through setting up a new multi-repo project from scratch and performing daily development.
 
-### Sync Logic
+### Phase 1: Project Initialization (One-time Setup)
 
-1.  **Global Sync (`sync`)**:
+If you are starting a brand new project with multiple repositories (e.g., `main`, `frontend`, `backend`).
 
-    - **Default**: Updates current Workspace (Pull --rebase).
-    - **With `--all`**:
-      - Updates Base Workspace from Remote.
-      - Propagates updates to all Feature Workspaces (Merge + Submodule Update).
+1.  **Create Repositories**:
+    Create your repositories on GitHub/GitLab.
 
-2.  **Preview Sync (`preview`)**:
-    - Identifies Common Root between Feature and Base submodules.
-    - Resets Base submodules to Common Root (on `preview` branch).
-    - Copies modified files from Feature to Base.
-    - **Note**: If you switch branches in the Feature Workspace during preview, files _will_ be synced, but the Git history (HEAD) in the Preview Workspace will remain at the initial Common Root. For best results, restart `preview` after switching branches.
+    - `my-project-main` (The container repo)
+    - `my-project-frontend`
+    - `my-project-backend`
 
-```
+2.  **Setup Main Repository**:
+    Clone the main repository and add your submodules.
 
-```
+    ```bash
+    git clone https://github.com/org/my-project-main.git
+    cd my-project-main
+
+    # Add submodules
+    git submodule add https://github.com/org/my-project-frontend.git frontend
+    git submodule add https://github.com/org/my-project-backend.git backend
+
+    # Commit setup
+    git commit -m "Setup project structure"
+    git push
+    ```
+
+### Phase 2: Developer Setup (Base Workspace)
+
+Every developer on the team performs this step to set up their environment.
+
+1.  **Clone Base Workspace**:
+    Clone the main repository recursively. This directory will serve as your **Base Workspace** and **Preview Target**.
+
+    ```bash
+    # Clone recursively to get all submodules
+    git clone --recursive https://github.com/org/my-project-main.git base-workspace
+    cd base-workspace
+    ```
+
+2.  **Initialize Configuration**:
+    Create a `workspace.json` file in the root of `base-workspace`.
+
+    ```bash
+    # Example workspace.json
+    echo '{
+      "base_path": "'$(pwd)'",
+      "workspaces": {},
+      "preview": ["cd frontend && npm run dev"],
+      "preview_hook": {
+        "before_clear": ["rm -rf dist"],
+        "after_preview": ["echo Preview Ready"]
+      }
+    }' > workspace.json
+    ```
+
+3.  **Start Daemon**:
+    Start the Workspace Daemon. It must be running for commands to work.
+
+    ```bash
+    workspace daemon
+    ```
+
+### Phase 3: Daily Development Cycle
+
+Now you are ready to develop features.
+
+1.  **Create Feature Workspace**:
+    Instead of working directly in `base-workspace`, create an isolated workspace.
+
+    ```bash
+    workspace create A
+    ```
+
+    _This creates `../base-workspace-A` (a sibling directory)._
+
+2.  **Start Preview**:
+    Switch the Base Workspace to preview your feature.
+
+    ```bash
+    workspace preview --workspace A
+    # OR simply: workspace preview
+    ```
+
+    _The Daemon will now sync changes from `A` to `base-workspace` in real-time._
+
+3.  **Develop**:
+    Open `../base-workspace-A` in your IDE.
+
+    - Modify `frontend/src/Login.js`.
+    - Modify `backend/api/auth.py`.
+    - **Result**: Changes are instantly synced to `base-workspace`. Your dev server running in `base-workspace` hot-reloads automatically.
+
+4.  **Sync Updates**:
+    If teammates push code to `main`, keep your workspace updated.
+
+    ```bash
+    workspace sync --all
+    ```
+
+5.  **Finish & Cleanup**:
+    Once your PR is merged, delete the feature workspace.
+
+    ```bash
+    workspace delete A
+    ```
+
+## 🛠️ Command Reference
+
+| Command          | Description                               | Example                           |
+| :--------------- | :---------------------------------------- | :-------------------------------- |
+| `daemon`         | Start the background service.             | `workspace daemon`                |
+| `status`         | Show daemon status and active workspaces. | `workspace status`                |
+| `create <names>` | Create new workspaces.                    | `workspace create A`              |
+| `preview`        | Switch preview to a specific workspace.   | `workspace preview --workspace A` |
+| `sync`           | Sync code from remote.                    | `workspace sync --all`            |
+| `delete <name>`  | Delete a workspace.                       | `workspace delete A`              |
+
+## 🧠 How It Works (Principles)
+
+### Client-Server Architecture
+
+- **Daemon (Server)**: A FastAPI application that manages state, holds locks for concurrency, and handles heavy Git operations. It maintains a singleton `WorkspaceManager`.
+- **CLI (Client)**: A lightweight Typer app that sends HTTP requests to the Daemon.
+
+### Git Worktrees
+
+Instead of cloning the repository multiple times (which is slow and wastes disk space), Workspace CLI uses **Git Worktrees**.
+
+- **Base Workspace**: The main repository clone.
+- **Feature Workspaces**: Linked worktrees that share the `.git` directory with the Base Workspace but have their own working trees.
+
+### Smart Syncing
+
+- **Global Sync**: `workspace sync` handles complex git operations (fetch, rebase, submodule update) across all workspaces.
+- **Live Preview Mechanism**:
+  1.  **Common Base Discovery**: When you switch preview, the Daemon calculates the common ancestor commit between your Feature Workspace and the Base Workspace (using `git merge-base`).
+  2.  **Clean Reset**: The Base Workspace is reset to this common ancestor state. This ensures a clean slate without conflicting history.
+  3.  **File Synchronization**: The Daemon then copies **all files** from the Feature Workspace to the Base Workspace (excluding `.git`). This effectively applies your current work-in-progress on top of the stable base, mimicking a "squashed" view of your changes.
+  4.  **Real-time Watch**: A file watcher (using `watchdog`) then monitors the Feature Workspace and instantly replicates any subsequent file changes to the Base Workspace.

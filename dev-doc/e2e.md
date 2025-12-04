@@ -1,139 +1,149 @@
-# E2E Test Documentation (Refactored)
+# E2E Test Documentation (Client-Server Architecture)
 
-此文档详细描述了基于 **Git Native (Workspace as Repo)** 架构的端到端 (E2E) 测试用例。
+This document details the End-to-End (E2E) test cases for the refactored **Client-Server** architecture of `workspace-cli`.
 
-## 测试环境准备
+## Test Environment Preparation
 
-1.  **工作目录**: `test-e2e-work-root`。
-2.  **前置条件**:
-    - 安装 `workspace-cli`。
-    - Git 环境可用。
+1.  **Work Directory**: `test-e2e-work-root`.
+    - **Create**: Ensure this directory is created before running tests.
+    - **Cleanup**: Delete this directory after tests complete successfully.
+2.  **Script Validation**:
+    - Ensure the test script (`tests/e2e/test_full_scenario.py`) covers **all** scenarios listed below.
+    - If a scenario is missing or outdated, update the script before running.
+3.  **Prerequisites**:
+    - `workspace-cli` installed (or runnable via `python -m workspace_cli.main`).
+    - Git environment available.
+    - Python 3.9+.
 
-## 测试用例
+## Test Cases
 
-### Case 1: 环境初始化 (Setup)
+### Case 1: Environment Initialization (Setup)
 
-**目标**: 模拟真实的远程仓库环境，包含主仓库和子模块。
+**Goal**: Simulate a real remote repository environment with main repo and submodules.
 
-**步骤**:
+**Steps**:
 
-1.  **创建 Remote Submodules**:
-    - 创建 `remote-backend` 仓库，提交初始文件。
-    - 创建 `remote-frontend` 仓库，提交初始文件。
-2.  **创建 Remote Main Repo**:
-    - 创建 `remote-main` 仓库。
-    - 使用 `git submodule add` 添加 `remote-backend` 和 `remote-frontend`。
-    - 提交并推送。
-3.  **模拟 Base Workspace**:
-    - `git clone --recursive remote-main base-workspace`。
-    - 这是我们的 "Base Workspace" (也是 Preview Workspace)。
+1.  **Create Remote Submodules**:
+    - Create `remote-backend` repo, commit initial files.
+    - Create `remote-frontend` repo, commit initial files.
+2.  **Create Remote Main Repo**:
+    - Create `remote-main` repo.
+    - Add `remote-backend` and `remote-frontend` as submodules.
+    - Commit and push.
+3.  **Clone Base Workspace**:
+    - `git clone --recursive remote-main base-workspace`.
+    - This serves as the "Base Workspace" (and default Preview Target).
 
-### Case 2: 创建 Workspace (Create)
+### Case 2: Daemon Lifecycle (Daemon)
 
-**目标**: 验证基于 Base Workspace 创建新的 Worktree Workspace。
+**Goal**: Verify Daemon start, status query, and shutdown.
 
-**步骤**:
+**Steps**:
 
-1.  **执行命令**: `workspace-cli create feature-a --base $(pwd)/base-workspace`
-2.  **验证**:
-    - 存在目录 `base-workspace-feature-a`。
-    - 该目录是 `base-workspace` 的 Git Worktree。
-    - 当前分支为 `workspace-feature-a/stand`。
-    - 子模块 `backend` 和 `frontend` 已被初始化且内容存在。
+1.  **Start Daemon**:
+    - Run `workspace daemon --port 8000` in background.
+2.  **Check Status**:
+    - Run `workspace status`.
+    - **Verify**: Output shows "Daemon Status: Idle" and lists workspaces (initially empty or just base).
+3.  **Keep Running**:
+    - The Daemon must remain running for subsequent steps.
 
-### Case 3: 全局同步 (Sync)
+### Case 3: Create Workspace (Create)
 
-**目标**: 验证 `sync` 命令能够同步远程变更到所有 Workspace。
+**Goal**: Verify creating a new Worktree Workspace via Daemon.
 
-**步骤**:
+**Steps**:
 
-1.  **模拟远程变更**:
-    - 在 `remote-main` 中更新子模块指针 (例如 `backend` 有新 Commit)。
-    - Push 到 `remote-main` 的 `main` 分支。
-2.  **执行 Sync**:
-    - 在 `base-workspace-feature-a` 中执行: `workspace-cli sync`。
-3.  **验证**:
-    - **Feature Workspace**: `stand` 分支已 Merge `main` 的变更，`backend` 子模块指向新 Commit。
+1.  **Execute Command**: `workspace create A --base $(pwd)/base-workspace`
+2.  **Verify**:
+    - Directory `base-workspace-A` exists.
+    - It is a Git Worktree of `base-workspace`.
+    - Current branch is `workspace-A/stand`.
+    - Submodules are initialized.
+    - `workspace status` shows `A` as an active workspace.
 
-### Case 4: Preview 初始化与同步
+### Case 4: Global Sync (Sync)
 
-**目标**: 验证 Preview 的 Common Root 逻辑和文件同步。
+**Goal**: Verify `sync` command triggers Daemon to sync workspaces.
 
-**步骤**:
+**Steps**:
 
-1.  **准备差异**:
-    - 在 `base-workspace-feature-a` (Source) 中修改 `backend/README.md`。
-    - **不提交** (Uncommitted Change)。
-2.  **执行 Preview**:
-    - `workspace-cli preview`。
-3.  **验证**:
+1.  **Simulate Remote Change**:
+    - Update submodule pointer in `remote-main`.
+    - Push to `main`.
+2.  **Execute Sync**:
+    - Run `workspace sync --all`.
+3.  **Verify**:
+    - Daemon logs/status indicate syncing.
+    - `base-workspace-A` pulls the new changes from `main`.
 
+### Case 5: Preview Switching (Preview)
+
+**Goal**: Verify `preview` command triggers Daemon to sync files to Base Workspace.
+
+**Steps**:
+
+1.  **Prepare Changes**:
+    - Modify `backend/README.md` in `base-workspace-A`.
+2.  **Execute Preview**:
+    - Run `workspace preview --workspace A`.
+3.  **Verify**:
     - **Base Workspace (Target)**:
+      - `backend/README.md` content matches `A`.
+      - Daemon starts a `Watcher` to sync future changes.
+    - `workspace status` shows `Active Preview: A`.
 
-      - `backend` 子模块切换到了 `preview` 分支。
-      - `backend/README.md` 内容已更新。
-      - `git status` 显示 `backend` 是 clean 的 (因为文件是 Copy 过去的，且 Base 是基于 Common Root，如果 Source 未提交，Base 应该也是 Uncommitted? 不，Base 是 Copy 覆盖。如果 Base Reset 到 Common Root，Copy 后应该是 Modified 状态)。
-      - _修正_: Preview 逻辑是 Reset 到 Common Root，然后 Copy 文件。所以 Base 中应该是 "Modified" 状态，且内容与 Source 一致。
+### Case 6: Live Watch (Watch)
 
-      - _修正_: Preview 逻辑是 Reset 到 Common Root，然后 Copy 文件。所以 Base 中应该是 "Modified" 状态，且内容与 Source 一致。
+**Goal**: Verify real-time file syncing (Incremental).
 
-### Case 5: Clean Preview (Clean)
+**Steps**:
 
-**目标**: 验证 `clean-preview` 命令能够清理 Preview 环境。
+1.  **Modify File**:
+    - Change `frontend/main.js` in `base-workspace-A`.
+2.  **Verify**:
+    - Change is automatically reflected in `base-workspace/frontend/main.js` (within seconds).
+    - **Note**: Only the modified file should be synced (incremental update).
 
-**步骤**:
+### Case 7: Switch Workspace (Switch)
 
-1.  **执行 Clean**:
-    - `workspace-cli clean-preview`。
-2.  **验证**:
-    - **Base Workspace**:
-      - `backend` 子模块切换回 `main` 分支。
-      - `preview` 分支被删除。
-      - `git status` 显示 clean (无 untracked files)。
+**Goal**: Verify switching preview to another workspace interrupts previous one.
 
-### Case 6: 切换 Workspace (Switch)
+**Steps**:
 
-**目标**: 验证 Preview 环境的清理和切换。
+1.  **Create Workspace B**:
+    - `workspace create B`.
+    - Make different changes in `B`.
+2.  **Switch Preview**:
+    - `workspace preview --workspace B`.
+3.  **Verify**:
+    - **Interruption**: Preview for `A` is stopped (watcher stopped).
+    - **Cleanup**: Base Workspace is reset.
+    - **Sync**: Base Workspace now reflects `B` content.
+    - `A` changes are gone from Base Workspace.
+    - `workspace status` shows `Active Preview: B`.
 
-**步骤**:
+### Case 8: Delete Workspace (Delete)
 
-1.  创建另一个 Workspace `feature-b`。
-2.  在 `feature-b` 做不同的修改。
-3.  执行 `workspace-cli preview --workspace feature-b`。
-4.  **验证**:
+**Goal**: Verify workspace deletion.
 
-    - Base Workspace 的内容变成了 `feature-b` 的内容。
-    - 之前的 `feature-a` 内容被清除。
+**Steps**:
 
-    - 之前的 `feature-a` 内容被清除。
+1.  **Execute Delete**:
+    - `workspace delete A`.
+2.  **Verify**:
+    - Directory `base-workspace-A` is removed.
+    - Worktree is pruned.
+    - `workspace status` no longer lists `A`.
 
-### Case 7: 删除 Workspace (Delete)
+### Case 9: Daemon Shutdown
 
-**目标**: 验证清理。
+**Goal**: Clean shutdown.
 
-**步骤**:
+**Steps**:
 
-1.  `workspace-cli delete feature-a`。
-2.  **验证**:
-    - 目录 `base-workspace-feature-a` 不存在。
-    - `git worktree list` 中不再包含该 Worktree。
-
-### Case 8: Run Preview (Run-Preview)
-
-**目标**: 验证 `run-preview` 命令能够托管 Preview 生命周期，并响应 `preview` 命令的触发。
-
-**步骤**:
-
-1.  **配置**:
-    - 在 `workspace.json` 中添加 `preview` 命令 (e.g., `echo "Running Server"`) 和 hooks (e.g., `before_clear`: `echo "Before Clear"`).
-2.  **启动 Run Preview**:
-    - 在 Base Workspace 执行 `workspace-cli run-preview` (后台运行)。
-3.  **触发 Preview**:
-    - 在 Feature Workspace 执行 `workspace-cli preview`。
-4.  **验证**:
-    - `run-preview` 的输出显示它接收到了触发。
-    - `before_clear` hook 被执行。
-    - Preview 同步逻辑被执行。
-    - `preview` 命令被执行。
-5.  **停止**:
-    - 停止 `run-preview` 进程。
+1.  **Stop Daemon**:
+    - Send SIGTERM/SIGINT to Daemon process.
+2.  **Verify**:
+    - Process exits.
+    - `workspace status` reports "Daemon is not running".
