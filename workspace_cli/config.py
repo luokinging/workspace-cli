@@ -63,8 +63,8 @@ def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
     return WorkspaceConfig(
         base_path=base_path,
         workspaces=workspaces,
-        preview=data.get("preview", []),
-        preview_hook=data.get("preview_hook", {})
+        preview=data.get("preview") or [],
+        preview_hook=data.get("preview_hook") or {}
     )
 
 def save_config(config: WorkspaceConfig, path: Path) -> None:

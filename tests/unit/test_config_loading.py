@@ -39,3 +39,19 @@ def test_save_and_load_config(tmp_path):
     assert loaded.preview == ["cmd1"]
     assert loaded.preview_hook.before_clear == ["hook1"]
     assert loaded.preview_hook.after_preview == ["hook2"]
+
+def test_load_config_with_nulls(tmp_path):
+    config_path = tmp_path / "workspace.json"
+    data = {
+        "base_path": str(tmp_path),
+        "workspaces": {},
+        "preview": None,
+        "preview_hook": None
+    }
+    config_path.write_text(json.dumps(data))
+    
+    config = load_config(config_path)
+    
+    assert config.preview == []
+    assert config.preview_hook.before_clear == []
+    assert config.preview_hook.after_preview == []
