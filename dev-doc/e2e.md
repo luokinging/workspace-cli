@@ -116,26 +116,4 @@
 1.  `workspace-cli delete feature-a`。
 2.  **验证**:
     - 目录 `base-workspace-feature-a` 不存在。
-
-### Case 8: Preview Hooks
-
-**目标**: 验证 `preview_hook` 配置的钩子命令是否正确执行。
-
-**步骤**:
-
-1.  **配置 Hook**:
-    - 在 `workspace.json` 中添加 `preview_hook`:
-      ```json
-      {
-        "preview_hook": {
-          "before_clear": "touch hook_before.txt",
-          "ready_preview": "touch hook_ready.txt"
-        }
-      }
-      ```
-2.  **执行 Preview**:
-    - `workspace-cli preview`。
-3.  **验证**:
-    - **Base Workspace**:
-      - 存在文件 `hook_before.txt`。
-      - 存在文件 `hook_ready.txt`。
+    - `git worktree list` 中不再包含该 Worktree。

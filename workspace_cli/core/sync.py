@@ -247,34 +247,10 @@ def rebuild_preview(workspace_name: str, config: WorkspaceConfig) -> None:
             print(f"  Git Error in {repo.name}: {e}")
             raise SyncError(f"Sync failed for {repo.name}")
 
-def _run_hook(hook_cmd: str, cwd: Path, hook_name: str) -> None:
-    """Run a preview hook command."""
-    if not hook_cmd:
-        return
-        
-    typer.secho(f"Running {hook_name} hook: {hook_cmd}", fg=typer.colors.MAGENTA)
-    try:
-        subprocess.run(
-            hook_cmd,
-            shell=True,
-            check=True,
-            cwd=cwd
-        )
-    except subprocess.CalledProcessError as e:
-        raise SyncError(f"Hook '{hook_name}' failed with exit code {e.returncode}")
-
 def init_preview(workspace_name: str, config: WorkspaceConfig) -> None:
     """Initialize preview workspace."""
     typer.secho(f"Initializing preview for workspace: {workspace_name}", fg=typer.colors.BLUE)
     
-    # Run before_clear hook
-    if config.preview_hook and config.preview_hook.before_clear:
-        # Target CWD is the preview workspace (base_path)
-        # But wait, before_clear is run BEFORE anything else.
-        # The user said: "preview_hook internal all hooks will cd to preview workspace as execution working directory"
-        # So we use config.base_path as cwd.
-        _run_hook(config.preview_hook.before_clear, config.base_path, "before_clear")
-
     pid_file = _get_pid_file(config)
     _check_pid_file(pid_file)
     _create_pid_file(pid_file)
@@ -390,20 +366,6 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
         init_preview(workspace_name, config)
     except SyncError as e:
         typer.secho(str(e), err=True, fg=typer.colors.RED)
-        return
-
-    # Run ready_preview hook
-    if config.preview_hook and config.preview_hook.ready_preview:
-        try:
-             _run_hook(config.preview_hook.ready_preview, config.base_path, "ready_preview")
-        except SyncError as e:
-            typer.secho(str(e), err=True, fg=typer.colors.RED)
-            _remove_pid_file(_get_pid_file(config))
-            return
-
-    if once:
-        typer.secho("Preview sync completed (once mode).", fg=typer.colors.GREEN)
-        _remove_pid_file(_get_pid_file(config))
         return
 
     if once:
