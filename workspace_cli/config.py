@@ -81,3 +81,41 @@ def save_config(config: WorkspaceConfig, path: Path) -> None:
     
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+def detect_current_workspace() -> str:
+    """
+    Detect the current workspace name based on the current working directory.
+    Returns None if not inside a known workspace.
+    """
+    try:
+        config = load_config()
+    except FileNotFoundError:
+        return None
+
+    cwd = Path.cwd().resolve()
+    
+    # Check feature workspaces
+    for name, entry in config.workspaces.items():
+        if not Path(entry.path).is_absolute():
+            ws_path = (config.base_path / entry.path).resolve()
+        else:
+            ws_path = Path(entry.path).resolve()
+        
+        try:
+            cwd.relative_to(ws_path)
+            return name
+        except ValueError:
+            continue
+            
+    # Check base workspace (optional, maybe return "base" or None?)
+    # For preview command, we usually want a feature workspace.
+    # But for sync, base is valid.
+    # Let's return None for base for now, or handle it in caller.
+    # Actually, if we are in base, we might want to know.
+    try:
+        cwd.relative_to(config.base_path.resolve())
+        return "base"
+    except ValueError:
+        pass
+        
+    return None

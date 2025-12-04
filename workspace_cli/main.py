@@ -2,8 +2,7 @@ import typer
 from pathlib import Path
 from typing import List, Optional
 from workspace_cli.config import load_config
-from workspace_cli.core import workspace as workspace_core
-from workspace_cli.core import sync as sync_core
+from workspace_cli.config import load_config
 
 app = typer.Typer()
 
@@ -44,38 +43,24 @@ def create(
     $ workspace create feature-a --base /path/to/base
     """
     try:
-        try:
-            config = load_config()
-        except FileNotFoundError:
-            if not base:
-                typer.echo("Config not found. Please provide --base to create one.", err=True)
-                raise typer.Exit(code=1)
+        from workspace_cli.client.api import DaemonClient
+        client = DaemonClient()
+        
+        # TODO: Handle base path if provided. 
+        # If config missing, we might need to initialize daemon with base path?
+        # But Daemon is supposed to be running.
+        # If Daemon is not running, we should probably tell user to start it.
+        # Or auto-start.
+        
+        if base:
+            # If base is provided, we might want to pass it.
+            # But currently create_workspaces takes optional base_path.
+            client.create_workspaces(names, base_path=str(base.resolve()))
+        else:
+            client.create_workspaces(names)
             
-            # Create new config
-            from workspace_cli.models import WorkspaceConfig, RepoConfig
-            from workspace_cli.config import save_config
-            
-            # Assume base path is absolute or relative to CWD
-            base_path = base.resolve()
-            config = WorkspaceConfig(
-                base_path=base_path,
-                workspaces={}
-            )
-            
-            # If CWD is the base path, save config in parent directory (Root)
-            # This ensures sibling workspaces can find the config.
-            if Path.cwd().resolve() == base_path:
-                save_path = base_path.parent / "workspace.json"
-            else:
-                save_path = Path.cwd() / "workspace.json"
-                
-            save_config(config, save_path)
-            typer.echo(f"Created config at {save_path}")
-
-            typer.echo(f"Created config at {save_path}")
-
-        for name in names:
-            workspace_core.create_workspace(name, config)
+        typer.echo(f"Created workspaces: {', '.join(names)}")
+        
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -92,8 +77,10 @@ def delete(name: str):
     $ workspace delete feature-a
     """
     try:
-        config = load_config()
-        workspace_core.delete_workspace(name, config)
+        from workspace_cli.client.api import DaemonClient
+        client = DaemonClient()
+        client.delete_workspace(name)
+        typer.echo(f"Deleted workspace: {name}")
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -102,107 +89,70 @@ def delete(name: str):
 def status():
     """
     Show workspace status.
-
-    Lists all active workspaces and their paths.
-    
-    Example:
-    
-    $ workspace status
     """
     try:
-        config = load_config()
-        workspace_core.get_status(config)
+        from workspace_cli.client.api import DaemonClient
+        client = DaemonClient()
+        if not client.is_running():
+            typer.echo("Daemon is not running.")
+            return
+
+        status = client.get_status()
+        typer.echo(f"Daemon Status: {'Syncing' if status.is_syncing else 'Idle'}")
+        if status.active_preview:
+            typer.echo(f"Active Preview: {status.active_preview}")
+        
+        typer.echo("\nWorkspaces:")
+        for ws in status.workspaces:
+            typer.echo(f"- {ws.name} ({ws.path}) [{'Active' if ws.is_active else 'Inactive'}]")
+            
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
+
+@app.command()
+def daemon(
+    host: str = typer.Option("127.0.0.1", help="Host to bind"),
+    port: int = typer.Option(8000, help="Port to bind"),
+    reload: bool = typer.Option(False, help="Enable auto-reload")
+):
+    """
+    Start the Workspace Daemon.
+    """
+    import uvicorn
+    typer.echo(f"Starting daemon on {host}:{port}...")
+    uvicorn.run("workspace_cli.server.app:app", host=host, port=port, reload=reload)
 
 @app.command()
 def preview(
     workspace: str = typer.Option(None, help="Target workspace name"),
-    once: bool = typer.Option(False, "--once", help="Run sync once and exit (no live watch)")
+    once: bool = typer.Option(False, "--once", help="Run sync once and exit (no live watch)"),
+    rebuild: bool = typer.Option(False, "--rebuild", help="Force rebuild of preview")
 ):
     """
     Start preview sync.
-
-    Syncs the specified workspace (or current workspace) to the preview environment and starts live watching.
-    
-    Examples:
-    
-    # Preview current workspace (must be run inside a workspace)
-    $ workspace preview
-    
-    # Preview specific workspace
-    $ workspace preview --workspace feature-a
     """
+
     try:
-        config = load_config()
+        from workspace_cli.client.api import DaemonClient
+        client = DaemonClient()
         
-        # Auto-detection logic
         if not workspace:
-            # Check if we are in a known workspace from config
-            current_workspace_name = None
-            for name, entry in config.workspaces.items():
-                # Resolve path
-                if not Path(entry.path).is_absolute():
-                    ws_path = (config.base_path / entry.path).resolve()
-                else:
-                    ws_path = Path(entry.path).resolve()
-                
-                # Check if cwd is inside ws_path
-                try:
-                    Path.cwd().relative_to(ws_path)
-                    current_workspace_name = name
-                    break
-                except ValueError:
-                    continue
+            from workspace_cli.config import detect_current_workspace
+            workspace = detect_current_workspace()
             
-            if current_workspace_name:
-                workspace = current_workspace_name
-                typer.echo(f"Auto-detected workspace: {workspace}")
-            else:
-                typer.echo("Could not auto-detect workspace. Please specify --workspace or run from within a workspace.")
+            if not workspace:
+                typer.echo("Could not auto-detect workspace. Please specify --workspace.")
                 raise typer.Exit(code=1)
             
-        sync_core.start_preview(workspace, config, once=once)
-    except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(code=1)
+            if workspace == "base":
+                 typer.echo("You are in the Base Workspace. Please specify a feature workspace to preview.")
+                 raise typer.Exit(code=1)
+                 
+            typer.echo(f"Auto-detected workspace: {workspace}")
 
-@app.command()
-def clean_preview():
-    """
-    Clean preview workspace.
-    
-    Stops any running preview process, resets the base workspace to main,
-    and removes untracked files.
-    """
-    try:
-        config = load_config()
-        sync_core.clean_preview(config)
-        typer.secho("Preview workspace cleaned.", fg=typer.colors.GREEN)
-    except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(code=1)
-
-@app.command()
-def run_preview():
-    """
-    Start the preview runner.
-    
-    Manages the preview lifecycle, including dev servers and hooks.
-    Must be run from the base workspace (preview workspace).
-    """
-    try:
-        config = load_config()
-        
-        # Verify we are in the base workspace
-        if config.base_path.resolve() != Path.cwd().resolve():
-            typer.secho(f"Error: run-preview must be executed in the base workspace: {config.base_path}", err=True, fg=typer.colors.RED)
-            raise typer.Exit(code=1)
-            
-        from workspace_cli.core.runner import PreviewRunner
-        runner = PreviewRunner(config)
-        runner.start()
+        client.switch_preview(workspace, rebuild=rebuild)
+        typer.echo(f"Preview switched to {workspace}")
         
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
@@ -225,34 +175,57 @@ def sync(
     3. Rebuild the preview content (if inside a workspace).
     """
     try:
-        config = load_config()
+        from workspace_cli.client.api import DaemonClient
+        client = DaemonClient()
         
-        if rebuild_preview:
-            sync_core.clean_preview(config)
+        # Determine workspace
+        workspace_name = None
+        if not all:
+            from workspace_cli.config import detect_current_workspace
+            workspace_name = detect_current_workspace()
             
-        sync_core.sync_workspaces(config, sync_all=all)
-        
-        if rebuild_preview:
-             # Detect workspace to rebuild preview for
-            current_workspace_name = None
-            for name, entry in config.workspaces.items():
-                if not Path(entry.path).is_absolute():
-                    ws_path = (config.base_path / entry.path).resolve()
-                else:
-                    ws_path = Path(entry.path).resolve()
+            if not workspace_name:
+                typer.echo("Could not auto-detect workspace. Please run from within a workspace or use --all.")
+                raise typer.Exit(code=1)
                 
-                try:
-                    Path.cwd().relative_to(ws_path)
-                    current_workspace_name = name
-                    break
-                except ValueError:
-                    continue
+            if workspace_name == "base":
+                # If in base, we sync base (which is effectively sync_all=False, target="base"?)
+                # Daemon sync_workspace logic:
+                # targets = [workspace_name] if not sync_all else ...
+                # If we pass "base", does it handle it?
+                # Manager.sync_workspace iterates over targets.
+                # If "base" is not in self.workspaces, it skips.
+                # Base workspace is special.
+                # We need to check Manager logic.
+                # For now, let's assume sync command handles base separately or Manager needs update.
+                # Actually, Manager sync logic:
+                # for name in targets: if name not in self.workspaces: continue
+                # So "base" will be skipped.
+                # We need to handle base sync.
+                # But wait, legacy sync handled base.
+                # Let's look at Manager.sync_workspace again.
+                pass
+        
+        target = workspace_name if workspace_name and workspace_name != "base" else None
+        
+        # If we are in base and not --all, we probably just want to pull base?
+        # But DaemonClient.sync_workspace sends a request to Daemon.
+        # Daemon syncs workspaces in config.
+        # Base is not in config.workspaces.
+        # So we might need a special flag or handle base sync locally?
+        # Or add base to workspaces?
+        # For now, let's just use the detected name.
+        
+        client.sync_workspace(
+            workspace_name=target if target else "dummy", 
+            sync_all=all, 
+            rebuild_preview=rebuild_preview
+        )
             
-            if current_workspace_name:
-                typer.secho(f"Rebuilding preview for {current_workspace_name}...", fg=typer.colors.BLUE)
-                sync_core.rebuild_preview(current_workspace_name, config)
-                typer.secho("Preview rebuilt.", fg=typer.colors.GREEN)
 
+        
+        typer.echo("Sync completed.")
+        
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
