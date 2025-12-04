@@ -3,3 +3,7 @@ pydantic
 watchdog
 pytest
 pytest-mock
+fastapi
+uvicorn
+httpx
+pytest-asyncio
