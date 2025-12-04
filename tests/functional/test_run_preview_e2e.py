@@ -110,7 +110,7 @@ def test_run_preview_e2e(tmp_path):
              print("DEBUG: Missing hook output. Full log above.")
         
         assert "Preview Runner Started" in log_content
-        assert "Received trigger for workspace: feature-a" in log_content
+        assert "Starting session for workspace: feature-a" in log_content
         assert "[Hook] Before Clear" in log_content
         assert "[Server] Running" in log_content
         assert "[Hook] After Preview" in log_content

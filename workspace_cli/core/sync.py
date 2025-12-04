@@ -366,28 +366,32 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
     
     # Check for active runner
     port_file = config.base_path / ".run_preview.port"
-    runner_active = False
+    runner_socket: Optional[socket.socket] = None
     
     if port_file.exists():
         try:
             port = int(port_file.read_text().strip())
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect(('127.0.0.1', port))
-                typer.secho(f"Connected to Preview Runner on port {port}", fg=typer.colors.GREEN)
-                
-                # Send trigger
-                s.sendall(f"PREVIEW {workspace_name}".encode())
-                
-                # Wait for ack
-                data = s.recv(1024)
-                if data == b"OK":
-                    typer.secho("Runner accepted trigger.", fg=typer.colors.GREEN)
-                    runner_active = True
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(('127.0.0.1', port))
+            typer.secho(f"Connected to Preview Runner on port {port}", fg=typer.colors.GREEN)
+            
+            # Send trigger
+            s.sendall(f"PREVIEW {workspace_name}".encode())
+            
+            # Wait for ack
+            data = s.recv(1024)
+            if data == b"ACCEPTED":
+                typer.secho("Runner accepted session.", fg=typer.colors.GREEN)
+                runner_socket = s
+            else:
+                typer.secho("Runner rejected session.", fg=typer.colors.RED)
+                s.close()
         except (ValueError, ConnectionRefusedError, OSError):
             # Runner dead or file stale
             pass
 
-    if not runner_active:
+    # If no runner, use standalone mode (PID check)
+    if not runner_socket:
         try:
             init_preview(workspace_name, config)
         except SyncError as e:
@@ -396,12 +400,16 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
 
     if once:
         typer.secho("Preview sync completed (once mode).", fg=typer.colors.GREEN)
-        if not runner_active:
+        if not runner_socket:
              _remove_pid_file(_get_pid_file(config))
+        else:
+            runner_socket.close()
         return
     
     if workspace_name not in config.workspaces:
         typer.secho(f"Workspace '{workspace_name}' not found in config.", err=True, fg=typer.colors.RED)
+        if runner_socket:
+            runner_socket.close()
         return
 
     ws_entry = config.workspaces[workspace_name]
@@ -437,16 +445,37 @@ def start_preview(workspace_name: str, config: WorkspaceConfig, once: bool = Fal
     signal.signal(signal.SIGTERM, handle_sigterm)
 
     try:
-        while True:
-            time.sleep(1)
+        if runner_socket:
+            # Monitor socket for closure
+            typer.secho("Monitoring session...", fg=typer.colors.BLUE)
+            runner_socket.settimeout(1.0)
+            while True:
+                try:
+                    data = runner_socket.recv(1024)
+                    if not data:
+                        typer.secho("\nSession ended by server (preempted by another workspace).", fg=typer.colors.YELLOW)
+                        break
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+        else:
+            # Standalone wait
+            while True:
+                time.sleep(1)
+                
     except KeyboardInterrupt:
         print("Stopping preview...")
+    finally:
         for o in observers:
             o.stop()
         for o in observers:
             o.join()
-    finally:
-        _remove_pid_file(_get_pid_file(config))
+            
+        if runner_socket:
+            runner_socket.close()
+        else:
+            _remove_pid_file(_get_pid_file(config))
 
 def sync_workspaces(config: WorkspaceConfig, sync_all: bool = False) -> None:
     """

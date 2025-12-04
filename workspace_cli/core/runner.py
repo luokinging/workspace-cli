@@ -19,6 +19,7 @@ class PreviewRunner:
         self.lock = threading.Lock()
         self.current_workspace: Optional[str] = None
         self.stop_event = threading.Event()
+        self.active_client_conn: Optional[socket.socket] = None
 
     def start(self):
         """Start the runner: setup socket and wait for commands."""
@@ -41,6 +42,11 @@ class PreviewRunner:
         """Stop runner and cleanup."""
         self.stop_event.set()
         self._stop_processes()
+        if self.active_client_conn:
+            try:
+                self.active_client_conn.close()
+            except Exception:
+                pass
         if self.server_socket:
             self.server_socket.close()
         if self.port_file.exists():
@@ -58,19 +64,48 @@ class PreviewRunner:
 
     def _listen_socket(self):
         """Listen for incoming connections."""
+        self.server_socket.settimeout(1.0) # Allow checking stop_event periodically
+        
         while not self.stop_event.is_set():
             try:
                 conn, addr = self.server_socket.accept()
-                with conn:
+                
+                # New connection received
+                typer.secho(f"\n[Runner] New connection from {addr}", fg=typer.colors.BLUE)
+                
+                # 1. Kick off existing client if any
+                if self.active_client_conn:
+                    typer.secho("[Runner] Terminating existing client session...", fg=typer.colors.YELLOW)
+                    try:
+                        self.active_client_conn.close()
+                    except Exception:
+                        pass
+                    self.active_client_conn = None
+                
+                # 2. Accept new client
+                self.active_client_conn = conn
+                
+                # 3. Handle handshake
+                try:
                     data = conn.recv(1024).decode().strip()
                     if data.startswith("PREVIEW "):
                         workspace = data.split(" ", 1)[1]
-                        typer.secho(f"\n[Runner] Received trigger for workspace: {workspace}", fg=typer.colors.MAGENTA)
+                        typer.secho(f"[Runner] Starting session for workspace: {workspace}", fg=typer.colors.MAGENTA)
                         
-                        # Trigger restart in a separate thread to not block socket
+                        # Trigger restart in a separate thread
                         threading.Thread(target=self._restart_lifecycle, args=(workspace,)).start()
                         
-                        conn.sendall(b"OK")
+                        conn.sendall(b"ACCEPTED")
+                    else:
+                        conn.close()
+                        self.active_client_conn = None
+                except Exception as e:
+                    typer.secho(f"[Runner] Handshake failed: {e}", fg=typer.colors.RED)
+                    conn.close()
+                    self.active_client_conn = None
+                    
+            except socket.timeout:
+                continue
             except OSError:
                 break
             except Exception as e:
