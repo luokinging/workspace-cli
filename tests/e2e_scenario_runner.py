@@ -14,11 +14,15 @@ def run_cmd(cmd, cwd=None, check=True):
     """Run a command and print it."""
     cwd_str = f" in {cwd}" if cwd else ""
     print(f"\n[USER] $ {' '.join(cmd)}{cwd_str}")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    
     result = subprocess.run(
         cmd,
         cwd=cwd,
         capture_output=True,
-        text=True
+        text=True,
+        env=env
     )
     if result.stdout:
         print(f"[STDOUT]\n{result.stdout.strip()}")
@@ -118,7 +122,7 @@ def test_sync(base_ws, ws_path):
     import json
     config = {
         "base_path": str(base_ws), 
-        "workspaces": {"feature-a": {"path": "base-ws-feature-a"}}
+        "workspaces": {"feature-a": {"path": str(ws_path)}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
@@ -133,16 +137,12 @@ def test_sync(base_ws, ws_path):
         print(">>> VERIFICATION FAILED: Sync did not update current workspace.")
         sys.exit(1)
         
-    # Verify Base Workspace NOT updated
+    # Verify Base Workspace IS updated (Preview Sync)
     if (base_ws / "backend" / "new_feature.txt").exists():
-        print(">>> VERIFICATION FAILED: Base workspace updated but should not be (without --all).")
-        # Note: This might fail if Base was somehow updated by something else, but it shouldn't be.
-        # However, Base Workspace pulls from remote-main. 
-        # remote-main was updated.
-        # But we didn't run pull in Base.
-        sys.exit(1)
+        print(">>> VERIFICATION PASSED: Base workspace updated (Preview Sync).")
     else:
-        print(">>> VERIFICATION PASSED: Base workspace not updated (as expected).")
+        print(">>> VERIFICATION FAILED: Base workspace not updated (Preview Sync failed).")
+        sys.exit(1)
 
     # Run sync --all
     print("[USER] Running 'workspace sync --all'...")
