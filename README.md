@@ -100,15 +100,32 @@ workspace preview
 - **Sync**: Copies tracked files from Feature Workspace to Base Workspace.
 - **Watch**: Monitors file changes and syncs them instantly.
 
+### 5. Run Preview (Optional)
+
+Use the `run-preview` command to manage the preview lifecycle (e.g., running dev servers) in the Base Workspace.
+
+```bash
+# Run from your Base Workspace
+workspace run-preview
+```
+
+- **Lifecycle**:
+  1.  Waits for `workspace preview` trigger from any Feature Workspace.
+  2.  **Before Clear**: Runs `preview_hook.before_clear` commands.
+  3.  **Clean & Sync**: Resets Base Workspace and syncs files.
+  4.  **Preview**: Runs `preview` commands (e.g., `npm run dev`) and `preview_hook.after_preview`.
+- **Note**: If `run-preview` is running, `workspace preview` will trigger it instead of performing a local sync.
+
 ## 📚 Command Reference
 
-| Command   | Description                                      | Example                      |
-| :-------- | :----------------------------------------------- | :--------------------------- |
-| `create`  | Create a new Workspace (Git Worktree).           | `workspace create feature-a` |
-| `sync`    | Sync workspace from remote. Use `--all` for all. | `workspace sync`             |
-| `preview` | Start live preview sync to Base Workspace.       | `workspace preview`          |
-| `delete`  | Delete a Workspace and its worktree.             | `workspace delete feature-a` |
-| `status`  | View current status and list of workspaces.      | `workspace status`           |
+| Command       | Description                                      | Example                      |
+| :------------ | :----------------------------------------------- | :--------------------------- |
+| `create`      | Create a new Workspace (Git Worktree).           | `workspace create feature-a` |
+| `sync`        | Sync workspace from remote. Use `--all` for all. | `workspace sync`             |
+| `preview`     | Start live preview sync to Base Workspace.       | `workspace preview`          |
+| `run-preview` | Start preview runner in Base Workspace.          | `workspace run-preview`      |
+| `delete`      | Delete a Workspace and its worktree.             | `workspace delete feature-a` |
+| `status`      | View current status and list of workspaces.      | `workspace status`           |
 
 ## ⚙️ Configuration
 
@@ -125,10 +142,12 @@ workspace preview
 }
 ```
 
-| Field        | Type   | Description                                                                        |
-| :----------- | :----- | :--------------------------------------------------------------------------------- |
-| `base_path`  | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this. |
-| `workspaces` | Map    | Map of created workspaces (Name -> Path). Managed automatically by CLI.            |
+| Field          | Type   | Description                                                                        |
+| :------------- | :----- | :--------------------------------------------------------------------------------- |
+| `base_path`    | String | **Absolute path of Base Workspace**. New Workspaces will be created based on this. |
+| `workspaces`   | Map    | Map of created workspaces (Name -> Path). Managed automatically by CLI.            |
+| `preview`      | List   | (Optional) List of commands to run during preview (e.g., dev server).              |
+| `preview_hook` | Map    | (Optional) Hooks: `before_clear`, `after_preview`.                                 |
 
 ## 🏗️ Architecture
 
