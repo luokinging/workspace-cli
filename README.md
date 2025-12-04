@@ -138,6 +138,11 @@ workspace run-preview
     "feature-a": {
       "path": "../base-workspace-feature-a"
     }
+  },
+  "preview": ["npm run dev"],
+  "preview_hook": {
+    "before_clear": ["echo 'Cleaning up...'"],
+    "after_preview": ["echo 'Preview ready!'"]
   }
 }
 ```
