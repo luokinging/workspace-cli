@@ -62,7 +62,13 @@ def create(
                 workspaces={}
             )
             
-            save_path = Path.cwd() / "workspace.json"
+            # If CWD is the base path, save config in parent directory (Root)
+            # This ensures sibling workspaces can find the config.
+            if Path.cwd().resolve() == base_path:
+                save_path = base_path.parent / "workspace.json"
+            else:
+                save_path = Path.cwd() / "workspace.json"
+                
             save_config(config, save_path)
             typer.echo(f"Created config at {save_path}")
 
