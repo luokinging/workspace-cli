@@ -44,6 +44,7 @@ class WorkspaceConfig(BaseModel):
     workspaces: Dict[str, WorkspaceEntry] = {}
     preview: List[str] = []
     preview_hook: PreviewHooks = PreviewHooks()
+    log_path: Optional[Path] = None
 
 class Context(BaseModel):
     root_path: Path

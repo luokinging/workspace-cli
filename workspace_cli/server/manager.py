@@ -44,7 +44,16 @@ class WorkspaceManager:
     async def initialize(self):
         """Load existing workspaces from disk/config"""
         try:
-            self.config = load_config(self.base_path / "workspace.json")
+            # Try to find config in current or parent directories
+            from workspace_cli.config import find_config_root
+            config_path = find_config_root(self.base_path)
+            
+            if config_path is None:
+                # 2. If not found, error out.
+                raise FileNotFoundError(f"No workspace.json found at {self.base_path} or its parents.")
+
+            logger.info(f"Loading config from {config_path}")
+            self.config = load_config(config_path)
             
             # Update base_path from config to ensure we use the true base
             if self.config.base_path != self.base_path:
@@ -80,10 +89,12 @@ class WorkspaceManager:
                     branch=branch
                 )
             # logger.debug(f"Loaded config with workspaces: {list(self.workspaces.keys())}")
-        except FileNotFoundError:
-            logger.info(f"No workspace.json found at {self.base_path}. Daemon is ready to accept connections.")
+        except FileNotFoundError as e:
+            logger.error(str(e))
+            raise e
         except Exception as e:
             logger.warning(f"Failed to load config: {e}")
+            raise e
 
     async def ensure_config(self, project_root: str):
         """Ensure configuration is loaded from project_root."""
@@ -255,6 +266,34 @@ class WorkspaceManager:
                     self.git.fetch(path)
                     self.git.pull(path, rebase=True)
                     self.git.update_submodules(path)
+                    
+                    # Sync submodules to main/latest
+                    from workspace_cli.config import get_managed_repos
+                    submodules = get_managed_repos(path)
+                    for sub in submodules:
+                        sub_path = path / sub.path
+                        if not sub_path.exists():
+                            continue
+                            
+                        # Try to checkout main if detached
+                        try:
+                            # Check if on a branch
+                            try:
+                                self.git.get_current_branch(sub_path)
+                            except Exception:
+                                # Likely detached or Error
+                                # Try checkout main
+                                logger.info(f"Checking out main for submodule {sub.name}")
+                                self.git.run_git_cmd(["checkout", "main"], sub_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to checkout main for submodule {sub.name}: {e}")
+                            
+                        # Pull latest
+                        try:
+                            logger.info(f"Pulling submodule {sub.name}")
+                            self.git.pull(sub_path, rebase=True)
+                        except Exception as e:
+                            logger.warning(f"Failed to pull submodule {sub.name}: {e}")
 
                 if sync_all:
                     # Sync base

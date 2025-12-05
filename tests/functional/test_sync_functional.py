@@ -194,3 +194,62 @@ def test_preview_sync(base_workspace, run_cli, daemon):
     finally:
         proc.terminate()
         proc.wait()
+
+def test_sync_updates_submodule_to_main(base_workspace, run_cli, daemon):
+    """
+    Test that 'workspace sync' updates submodules to origin/main 
+    and keeps them on the main branch.
+    """
+    # 1. Create feature workspace
+    res = run_cli(["create", "submod-test", "--base", str(base_workspace)])
+    assert res.returncode == 0
+    
+    ws_path = base_workspace.parent / "base-ws-submod-test"
+    backend_path = ws_path / "backend"
+    
+    # Check initial state of submodule
+    # Usually it is detached HEAD at the commit stored in superproject
+    res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=backend_path, capture_output=True, text=True)
+    initial_branch = res.stdout.strip()
+    # It is likely 'HEAD' (detached)
+    
+    # The user EXPECTS it to be checked out to main and merged?
+    # Or maybe valid state is user manually checked out main, and sync should keep it up to date.
+    
+    # Let's switch submodule to main first, as a user might do to start dev
+    subprocess.run(["git", "checkout", "main"], cwd=backend_path, check=True)
+    
+    # 2. Simulate remote update in SUBMODULE
+    test_dir = base_workspace.parent
+    remote_backend = test_dir / "remote-backend"
+    
+    # Clone remote backend to push a change
+    backend_updater = test_dir / "backend-updater"
+    subprocess.run(["git", "clone", str(remote_backend), str(backend_updater)], check=True)
+    (backend_updater / "new_feature.txt").write_text("feature v1")
+    subprocess.run(["git", "add", "."], cwd=backend_updater, check=True)
+    subprocess.run(["git", "commit", "-m", "update submodule content"], cwd=backend_updater, check=True)
+    subprocess.run(["git", "push"], cwd=backend_updater, check=True)
+    
+    # Note: We do NOT update the superproject to point to this new commit.
+    # We want to see if 'workspace sync' pulls the submodule changes INDEPENDENTLY 
+    # (or if that is the requirement).
+    
+    # 3. Run sync
+    # Create config for sync
+    config = {
+        "base_path": str(base_workspace),
+        "workspaces": {"submod-test": {"path": str(ws_path)}}
+    }
+    with open(ws_path / "workspace.json", "w") as f:
+        json.dump(config, f)
+        
+    result = run_cli(["sync"], cwd=ws_path)
+    assert result.returncode == 0
+    
+    # 4. Verify submodule is updated
+    assert (backend_path / "new_feature.txt").exists(), "Submodule was not updated to latest origin/main"
+    
+    # Verify still on main
+    res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=backend_path, capture_output=True, text=True)
+    assert res.stdout.strip() == "main", "Submodule should be on main branch"

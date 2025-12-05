@@ -24,10 +24,10 @@ async def test_lazy_config_initialization(tmp_path, caplog):
     # Capture logs
     import logging
     with caplog.at_level(logging.INFO):
-        await manager.initialize()
-        # Verify info message
-        assert f"No workspace.json found at {dummy_path}. Daemon is ready to accept connections." in caplog.text
-    
+        # Expect FileNotFoundError
+        with pytest.raises(FileNotFoundError, match="No workspace.json found"):
+            await manager.initialize()
+        
     # Verify config is None (failed to load)
     assert manager.config is None
     
@@ -38,6 +38,35 @@ async def test_lazy_config_initialization(tmp_path, caplog):
     assert manager.config is not None
     assert manager.base_path == project_root
     assert manager.runner.base_path == project_root
+
+@pytest.mark.asyncio
+async def test_parent_directory_config_detection(tmp_path):
+    # Setup: root/workspace.json
+    #        root/subdir/
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "workspace.json").write_text('{"base_path": ".", "workspaces": {}}')
+    
+    subdir = root / "subdir"
+    subdir.mkdir()
+    
+    # Reset singleton
+    WorkspaceManager._instance = None
+    # Initialize manager from subdir
+    manager = WorkspaceManager.get_instance(subdir)
+    
+    await manager.initialize()
+    
+    assert manager.config is not None
+    # The base_path should be updated to root (where config is)? 
+    # Actually, manager uses config path related logic.
+    # In manager.py: 
+    # self.config = load_config(config_path)
+    # checking base_path from config...
+    # If base_path in json is ".", it resolves to config dir.
+    # So base_path should be 'root'.
+    
+    assert manager.base_path == root
 
 @pytest.mark.asyncio
 async def test_client_sends_project_root(tmp_path):

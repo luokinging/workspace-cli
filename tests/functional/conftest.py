@@ -76,9 +76,15 @@ def base_workspace(test_dir, git_author_config):
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=base_ws, check=True)
     subprocess.run(["git", "config", "user.name", "Test User"], cwd=base_ws, check=True)
     
-    # Create workspace.json (Optional, but good for config loading if needed)
-    # Note: New create command doesn't strictly need it if we auto-detect, but we might test explicit config too.
-    # For now, let's rely on auto-detection or create one if tests need specific settings.
+    # Create workspace.json (REQUIRED for daemon to start)
+    config = {
+        "base_path": str(base_ws.resolve()),
+        "workspaces": {},
+        "preview": [],
+        "preview_hook": {"before_clear": [], "after_preview": []}
+    }
+    with open(base_ws / "workspace.json", "w") as f:
+        json.dump(config, f)
     
     return base_ws
 
