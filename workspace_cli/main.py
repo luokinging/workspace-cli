@@ -113,13 +113,20 @@ def status():
 @app.command()
 def daemon(
     host: str = typer.Option("127.0.0.1", help="Host to bind"),
-    port: int = typer.Option(8000, help="Port to bind"),
-    reload: bool = typer.Option(False, help="Enable auto-reload")
+    port: int = typer.Option(9000, help="Port to bind"),
+    reload: bool = typer.Option(False, help="Enable auto-reload"),
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging")
 ):
     """
     Start the Workspace Daemon.
     """
     import uvicorn
+    import os
+    
+    if debug:
+        os.environ["WORKSPACE_DEBUG"] = "1"
+        typer.echo("Debug mode enabled")
+
     typer.echo(f"Starting daemon on {host}:{port}...")
     uvicorn.run("workspace_cli.server.app:app", host=host, port=port, reload=reload)
 
@@ -153,6 +160,24 @@ def preview(
 
         client.switch_preview(workspace, rebuild=rebuild)
         typer.echo(f"Preview switched to {workspace}")
+        
+        if not once:
+            typer.echo("Streaming logs... (Ctrl+C to stop)")
+            from rich.console import Console
+            console = Console()
+            try:
+                for line in client.stream_logs():
+                    console.print(line)
+            except KeyboardInterrupt:
+                typer.echo("Stopping preview...")
+                # Optional: Send stop request? Or just disconnect?
+                # If we disconnect, server might keep running until next switch.
+                # But requirement says "resident command line will automatically exit".
+                # If user Ctrl+C, they exit.
+                pass
+            except Exception as e:
+                # If server closes connection (e.g. new preview), we might get here or just loop ends.
+                typer.echo(f"Disconnected: {e}")
         
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
