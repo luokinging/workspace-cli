@@ -1,7 +1,7 @@
 import json
 import configparser
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from workspace_cli.models import WorkspaceConfig, RepoConfig, WorkspaceEntry
 
 def get_managed_repos(base_path: Path) -> List[RepoConfig]:
@@ -30,20 +30,69 @@ def get_managed_repos(base_path: Path) -> List[RepoConfig]:
                 ))
     return repos
 
-def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
+def find_config_root(start_path: Path = None) -> Optional[Path]:
+    """Find workspace.json in start_path or its parents."""
+    if start_path is None:
+        start_path = Path.cwd()
+    
+    for parent in [start_path] + list(start_path.parents):
+        config_path = parent / "workspace.json"
+        if config_path.exists():
+            return config_path
+            
+        # Check if we are in a git worktree
+        git_file = parent / ".git"
+        if git_file.exists() and git_file.is_file():
+            # Read gitdir from .git file
+            try:
+                content = git_file.read_text().strip()
+                if content.startswith("gitdir:"):
+                    gitdir_path = Path(content.split(":", 1)[1].strip())
+                    if not gitdir_path.is_absolute():
+                        gitdir_path = (parent / gitdir_path).resolve()
+                    
+                    # gitdir is usually /path/to/base/.git/worktrees/name
+                    # We want /path/to/base
+                    # Check if it follows the worktree structure
+                    if "worktrees" in gitdir_path.parts:
+                        # Go up until we find .git directory or workspace.json
+                        # Usually base is gitdir_path.parent.parent.parent (worktrees/name/../../..)
+                        # But let's be safer.
+                        # The gitdir is inside .git of the base repo.
+                        # So gitdir_path.parent.parent should be the .git dir of base.
+                        # And gitdir_path.parent.parent.parent should be the base root.
+                        
+                        # Example: /base/.git/worktrees/feature
+                        # parent -> /base/.git/worktrees
+                        # parent.parent -> /base/.git
+                        # parent.parent.parent -> /base
+                        
+                        base_candidate = gitdir_path.parent.parent.parent
+                        if (base_candidate / "workspace.json").exists():
+                            return base_candidate / "workspace.json"
+            except Exception:
+                pass
+                
+    return None
+
+def load_config(path: Path = None) -> WorkspaceConfig:
     """Load workspace configuration from JSON file."""
-    if not path.exists():
-        # Fallback or error?
-        # For now, let's assume we are in the root of the base workspace or a child workspace
-        # and try to find workspace.json in current or parent dirs.
-        current = Path.cwd()
-        for parent in [current] + list(current.parents):
-            config_path = parent / "workspace.json"
-            if config_path.exists():
-                path = config_path
-                break
-        else:
+    if path is None:
+        path = find_config_root()
+        if path is None:
              raise FileNotFoundError("workspace.json not found in current or parent directories.")
+    elif not path.exists():
+        # If path is provided but doesn't exist, try to find it?
+        # Or just error?
+        # If path is "workspace.json" (relative), we might want to search.
+        if path.name == "workspace.json" and not path.is_absolute():
+             found = find_config_root()
+             if found:
+                 path = found
+             else:
+                 raise FileNotFoundError(f"{path} not found.")
+        else:
+             raise FileNotFoundError(f"{path} not found.")
 
     with open(path, "r") as f:
         data = json.load(f)
@@ -64,7 +113,8 @@ def load_config(path: Path = Path("workspace.json")) -> WorkspaceConfig:
         base_path=base_path,
         workspaces=workspaces,
         preview=data.get("preview") or [],
-        preview_hook=data.get("preview_hook") or {}
+        preview_hook=data.get("preview_hook") or {},
+        log_path=Path(data["log_path"]) if data.get("log_path") else None
     )
 
 def save_config(config: WorkspaceConfig, path: Path) -> None:
@@ -76,7 +126,8 @@ def save_config(config: WorkspaceConfig, path: Path) -> None:
             for name, entry in config.workspaces.items()
         },
         "preview": config.preview,
-        "preview_hook": config.preview_hook.model_dump()
+        "preview_hook": config.preview_hook.model_dump(),
+        "log_path": str(config.log_path) if config.log_path else None
     }
     
     with open(path, "w") as f:
