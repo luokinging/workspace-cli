@@ -75,3 +75,32 @@ This document outlines the standard workflow for developing, testing, and verify
 - [ ] `pytest tests/unit` passed.
 - [ ] `pytest tests/e2e` passed.
 - [ ] Documentation (docstrings, README, dev-docs) updated if necessary.
+
+---
+
+## 4. Release Process (PyPI)
+
+### Step 1: Preparation
+
+1.  **Version Bump**: Update the version number in `setup.py` and `pyproject.toml`.
+    - Follow Semantic Versioning (MAJOR.MINOR.PATCH).
+2.  **Clean**: Remove old build artifacts.
+    ```bash
+    rm -rf dist/ build/ *.egg-info
+    ```
+
+### Step 2: Build
+
+1.  **Build Package**:
+    ```bash
+    python -m build
+    ```
+2.  **Verify**: Check `dist/` folder for `.tar.gz` and `.whl` files.
+
+### Step 3: Upload
+
+1.  **Upload to PyPI**:
+    ```bash
+    twine upload dist/*
+    ```
+    - You will need PyPI credentials (or API token).

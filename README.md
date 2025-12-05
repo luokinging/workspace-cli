@@ -46,6 +46,9 @@ workspace daemon
 
 # Or run in foreground for debugging
 workspace daemon --foreground
+
+# Enable detailed debug logs (file events, process lifecycle)
+workspace daemon --debug
 ```
 
 ### 2. Initialize Base Workspace
