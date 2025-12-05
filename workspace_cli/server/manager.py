@@ -4,6 +4,11 @@ from pathlib import Path
 from workspace_cli.models import Workspace, PreviewSession, DaemonStatus, PreviewStatus
 from workspace_cli.server.git import GitProvider, ShellGitProvider
 from workspace_cli.server.watcher import Watcher
+from workspace_cli.server.runner import PreviewRunner
+from workspace_cli.config import load_config
+
+from workspace_cli.utils.logger import get_logger
+logger = get_logger()
 
 class WorkspaceManager:
     _instance = None
@@ -14,8 +19,10 @@ class WorkspaceManager:
         self.workspaces: Dict[str, Workspace] = {}
         self.preview_session: Optional[PreviewSession] = None
         self.watcher = None
+        self.runner = PreviewRunner(base_path)
         self.is_syncing: bool = False
         self._lock = asyncio.Lock()
+        self.config = None
 
     @classmethod
     def get_instance(cls, base_path: Path = None, git_provider: GitProvider = None) -> 'WorkspaceManager':
@@ -27,7 +34,7 @@ class WorkspaceManager:
 
     async def get_status(self) -> DaemonStatus:
         async with self._lock:
-            print(f"DEBUG: get_status called. Workspaces: {list(self.workspaces.keys())}")
+            # logger.debug(f"get_status called. Workspaces: {list(self.workspaces.keys())}")
             return DaemonStatus(
                 active_preview=self.preview_session.workspace_name if self.preview_session else None,
                 workspaces=list(self.workspaces.values()),
@@ -36,8 +43,68 @@ class WorkspaceManager:
 
     async def initialize(self):
         """Load existing workspaces from disk/config"""
-        # TODO: Load from workspace.json or scan directories
-        pass
+        try:
+            self.config = load_config(self.base_path / "workspace.json")
+            
+            # Update base_path from config to ensure we use the true base
+            if self.config.base_path != self.base_path:
+                logger.debug(f"Updating base_path from config: {self.config.base_path}")
+                self.base_path = self.config.base_path
+                self.runner.base_path = self.base_path
+                
+            # Configure logging if log_path is set
+            if self.config.log_path:
+                import os
+                from workspace_cli.utils.logger import setup_logging
+                debug_mode = os.environ.get("WORKSPACE_DEBUG") == "1"
+                setup_logging(debug=debug_mode, log_file=self.config.log_path)
+                logger.debug(f"Logging configured to {self.config.log_path}")
+
+            self.workspaces = {}
+            for name, entry in self.config.workspaces.items():
+                ws_path = Path(entry.path)
+                if not ws_path.is_absolute():
+                    ws_path = (self.base_path / ws_path).resolve()
+                
+                # Try to detect branch if possible, otherwise default
+                branch = f"workspace-{name}/stand"
+                if ws_path.exists():
+                    try:
+                        branch = self.git.get_current_branch(ws_path)
+                    except Exception:
+                        pass
+
+                self.workspaces[name] = Workspace(
+                    name=name,
+                    path=str(ws_path),
+                    branch=branch
+                )
+            # logger.debug(f"Loaded config with workspaces: {list(self.workspaces.keys())}")
+        except FileNotFoundError:
+            logger.info(f"No workspace.json found at {self.base_path}. Daemon is ready to accept connections.")
+        except Exception as e:
+            logger.warning(f"Failed to load config: {e}")
+
+    async def ensure_config(self, project_root: str):
+        """Ensure configuration is loaded from project_root."""
+        async with self._lock:
+            if self.config is None:
+                logger.debug(f"Initializing config from {project_root}")
+                self.base_path = Path(project_root)
+                self.runner.base_path = self.base_path # Update runner base path too
+                await self.initialize()
+            elif str(self.base_path) != str(project_root):
+                # Check if project_root is actually a feature workspace pointing to same base
+                try:
+                    # If we load config from project_root, does it match our base?
+                    temp_config = load_config(Path(project_root) / "workspace.json")
+                    if temp_config.base_path == self.base_path:
+                        # It's fine, just a feature workspace
+                        pass
+                    else:
+                        logger.warning(f"Daemon is running for {self.base_path}, but request is for {project_root} (base: {temp_config.base_path}). Ignoring request root.")
+                except Exception:
+                     logger.warning(f"Daemon is running for {self.base_path}, but request is for {project_root}. Ignoring request root.")
 
     async def switch_preview(self, workspace_name: str, rebuild: bool = False):
         async with self._lock:
@@ -45,12 +112,7 @@ class WorkspaceManager:
 
     async def _switch_preview_internal(self, workspace_name: str, rebuild: bool = False):
         if workspace_name not in self.workspaces:
-            # For now, if not found, maybe try to find it or error
-            # Assuming we have a way to know about workspaces.
-            # If not in memory, maybe we should check disk?
-            # For Phase 3, let's assume it's in memory or we just use the name to find path.
-            # But we haven't implemented load logic yet.
-            # Let's assume we can create a temporary workspace entry if path exists.
+            # Auto-register if path exists
             ws_path = self.base_path.parent / f"{self.base_path.name}-{workspace_name}"
             if ws_path.exists():
                     self.workspaces[workspace_name] = Workspace(
@@ -64,49 +126,40 @@ class WorkspaceManager:
         workspace = self.workspaces[workspace_name]
         
         # 1. Stop existing preview
-        # 1. Stop existing preview
         if self.preview_session:
             print(f"DEBUG: Stopping existing preview for {self.preview_session.workspace_name}")
             if self.watcher:
                 self.watcher.stop()
                 self.watcher = None
+            await self.runner.stop()
 
         # 2. Clean Preview Workspace (Base Path)
-        # We assume base_path IS the preview workspace for now (as per design)
-        # Or is there a separate preview workspace?
-        # Design says: "Checkout Preview Workspace to this base commit"
-        # "Preview Workspace" usually implies the base repo where we run things.
         target_path = self.base_path
         
+        # Run before_clear hooks
+        if self.config and self.config.preview_hook.before_clear:
+            await self.runner.run_hooks(self.config.preview_hook.before_clear, "before_clear")
+
         self.git.clean(target_path)
 
         # 3. Find Common Base
-        # We need the commit hash of the feature workspace and main
-        # Assuming main is in base_path or we fetch it?
-        # Design: "Find the common ancestor commit between Target Feature and Main"
-        # We need to know what "Main" is.
-        # Let's assume "origin/main" or just "main".
         feature_path = Path(workspace.path)
         feature_commit = self.git.get_commit_hash(feature_path, "HEAD")
-        # We need to fetch in target to ensure we have the objects?
-        # Or if they are worktrees, they share objects.
-        # So we can just find merge base.
-        # We need main commit.
         main_commit = self.git.get_commit_hash(target_path, "main") # Or origin/main
         
         common_base = self.git.get_common_base(target_path, feature_commit, main_commit)
 
         # 4. Checkout Preview Workspace to Base
-        self.git.checkout(target_path, common_base, force=True)
+        # Create/Reset 'preview' branch to common_base
+        # Use checkout -B to force create/reset and checkout
+        try:
+            self.git.run_git_cmd(["checkout", "-B", "preview", common_base], target_path)
+        except Exception as e:
+            print(f"Warning: Failed to checkout -B preview: {e}")
+            # Fallback to detached HEAD
+            self.git.checkout(target_path, common_base, force=True)
 
         # 5. Sync Files (Copy)
-        # We need to copy modified files from feature to target.
-        # For Phase 3, we can just copy everything (excluding git) or use rsync?
-        # Or use the Watcher logic to sync initially?
-        # Design says: "Sync (copy) file differences"
-        # Simple approach: Copy all files from feature to target (excluding .git)
-        # This might be slow for large repos, but "Fast Local Preview" implies it's faster than git pull.
-        # We can use `shutil.copytree` with `dirs_exist_ok=True`.
         import shutil
         def ignore_git(dir, files):
             return [f for f in files if f == '.git' or f == 'node_modules'] # Basic ignore
@@ -114,9 +167,20 @@ class WorkspaceManager:
         shutil.copytree(feature_path, target_path, dirs_exist_ok=True, ignore=ignore_git)
 
         # 6. Start Watcher
-        # from workspace_cli.server.watcher import Watcher
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Starting Watcher from {feature_path} to {target_path}")
         self.watcher = Watcher(feature_path, target_path)
         self.watcher.start()
+
+        # 7. Run Preview Commands and After Hooks
+        if self.config:
+            if self.config.preview:
+                await self.runner.start_preview(self.config.preview)
+            if self.config.preview_hook.after_preview:
+                # Run after hooks (maybe in background or parallel?)
+                # Usually after_preview might be "open browser" etc.
+                await self.runner.run_hooks(self.config.preview_hook.after_preview, "after_preview")
 
         # Update Session
         from datetime import datetime
@@ -128,11 +192,11 @@ class WorkspaceManager:
         workspace.is_active = True
 
     async def create_workspace(self, names: List[str], base_path: Path = None):
-        print(f"DEBUG: create_workspace called with names={names}")
+        logger.debug(f"create_workspace called with names={names}")
         async with self._lock:
             for name in names:
                 if name in self.workspaces:
-                    print(f"DEBUG: Workspace {name} already exists")
+                    logger.debug(f"Workspace {name} already exists")
                     continue # Already exists
                 
                 # Logic to create workspace worktree
@@ -140,18 +204,16 @@ class WorkspaceManager:
                 ws_path = self.base_path.parent / f"{self.base_path.name}-{name}"
                 
                 if ws_path.exists():
-                    # If exists, just register it? Or fail?
-                    # Legacy logic failed.
-                    # But we might want to be idempotent.
                     pass
                 else:
                     # 2. Create Worktree
+                    # We need to pick a branch name.
+                    # Default: workspace-{name}/stand
                     branch_name = f"workspace-{name}/stand"
-                    print(f"DEBUG: Creating worktree at {ws_path} with branch {branch_name}")
+                    
+                    logger.debug(f"Creating worktree at {ws_path} with branch {branch_name}")
                     self.git.create_worktree(self.base_path, branch_name, ws_path)
                     self.git.update_submodules(ws_path)
-                    # Set upstream to origin/main so sync works
-                    # Assuming origin/main exists.
                     self.git.set_upstream(self.base_path, branch_name, "origin/main")
                 
                 # 3. Register
@@ -160,7 +222,7 @@ class WorkspaceManager:
                     path=str(ws_path),
                     branch=f"workspace-{name}/stand"
                 )
-                print(f"DEBUG: Registered workspace {name}. Current workspaces: {list(self.workspaces.keys())}")
+                logger.debug(f"Registered workspace {name}. Current workspaces: {list(self.workspaces.keys())}")
 
     async def delete_workspace(self, name: str):
         async with self._lock:
@@ -182,39 +244,51 @@ class WorkspaceManager:
             try:
                 targets = [workspace_name] if not sync_all else list(self.workspaces.keys())
                 
+                # If sync_all, also sync base workspace
+                if sync_all:
+                    # We treat base workspace as a target too, but it's not in self.workspaces
+                    # We can handle it separately or add to targets if we handle path resolution
+                    pass 
+
+                # Helper to sync a path
+                def sync_path(path: Path):
+                    self.git.fetch(path)
+                    self.git.pull(path, rebase=True)
+                    self.git.update_submodules(path)
+
+                if sync_all:
+                    # Sync base
+                    # print(f"DEBUG: Syncing base path: {self.base_path}")
+                    sync_path(self.base_path)
+
                 for name in targets:
                     if name not in self.workspaces:
                         continue
                     
                     workspace = self.workspaces[name]
                     path = Path(workspace.path)
-                    
-                    # 1. Fetch
-                    self.git.fetch(path)
-                    
-                    # 2. Pull
-                    self.git.pull(path, rebase=True)
+                    sync_path(path)
                 
                 # 3. Rebuild Preview if needed
                 if rebuild_preview:
                     if self.preview_session and self.preview_session.workspace_name in targets:
+                        # We need to be careful with lock reentrancy here.
+                        # Since we extracted _switch_preview_internal, we can call it?
+                        # No, _switch_preview_internal does NOT acquire lock.
+                        # So it is safe to call it here since we hold the lock.
                         await self._switch_preview_internal(self.preview_session.workspace_name, rebuild=True)
-                        # We need to release lock? No, switch_preview acquires lock.
-                        # We are already holding lock.
-                        # switch_preview is async but we hold lock.
-                        # We need to refactor switch_preview to have an internal _switch_preview without lock?
-                        # Or just call the logic directly here.
-                        # For simplicity, let's just duplicate logic or extract it.
-                        # But wait, asyncio.Lock is not reentrant!
-                        # We MUST NOT call switch_preview here if it acquires lock.
-                        # We should extract _switch_preview.
-                        pass
                         
             finally:
                 self.is_syncing = False
-                
-            # If we need to rebuild, we should do it after releasing lock?
-            # Or make lock reentrant (not possible with asyncio.Lock).
-            # We should extract logic.
-            
 
+    async def subscribe_to_logs(self):
+        """Subscribe to preview logs."""
+        queue = await self.runner.add_observer()
+        try:
+            while True:
+                line = await queue.get()
+                if line is None:
+                    break
+                yield line
+        finally:
+            self.runner.remove_observer(queue)
