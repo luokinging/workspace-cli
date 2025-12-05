@@ -7,7 +7,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="dev-ws",
-    version="0.1.2",
+    version="0.2.0",
     description="A CLI tool for managing multiple workspaces with git worktrees and live preview.",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -19,6 +19,11 @@ setup(
         "typer",
         "pydantic",
         "watchdog",
+        "fastapi",
+        "uvicorn",
+        "httpx",
+        "rich",
+        "shellingham",
     ],
     entry_points={
         "console_scripts": [

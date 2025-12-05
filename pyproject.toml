@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dev-ws"
-version = "0.1.2"
+version = "0.2.0"
 description = "A CLI tool for managing multiple workspaces with git worktrees and live preview."
 readme = "README.md"
 authors = [
@@ -21,7 +21,10 @@ dependencies = [
     "pydantic",
     "watchdog",
     "rich",
-    "shellingham"
+    "shellingham",
+    "fastapi",
+    "uvicorn",
+    "httpx",
 ]
 
 [project.scripts]
