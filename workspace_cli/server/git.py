@@ -43,8 +43,11 @@ class GitProvider(Protocol):
     def set_upstream(self, path: Path, branch: str, upstream: str) -> None:
         ...
 
+    def run_git_cmd(self, args: List[str], cwd: Path) -> str:
+        ...
+
 class ShellGitProvider:
-    def _run(self, args: List[str], cwd: Path) -> str:
+    def run_git_cmd(self, args: List[str], cwd: Path) -> str:
         try:
             result = subprocess.run(
                 ["git"] + args,
@@ -58,12 +61,12 @@ class ShellGitProvider:
             raise GitError(f"Git command failed: {e.stderr}") from e
 
     def get_current_branch(self, path: Path) -> str:
-        return self._run(["rev-parse", "--abbrev-ref", "HEAD"], path)
+        return self.run_git_cmd(["rev-parse", "--abbrev-ref", "HEAD"], path)
 
     def create_worktree(self, repo_path: Path, branch: str, path: Path) -> None:
         # Check if branch exists
         try:
-            self._run(["rev-parse", "--verify", branch], repo_path)
+            self.run_git_cmd(["rev-parse", "--verify", branch], repo_path)
             exists = True
         except GitError:
             exists = False
@@ -74,66 +77,59 @@ class ShellGitProvider:
         else:
             cmd.extend([str(path), branch])
             
-        self._run(cmd, repo_path)
+        self.run_git_cmd(cmd, repo_path)
 
     def remove_worktree(self, path: Path) -> None:
-        # Prune worktrees from the base repo context? 
-        # Usually we delete the directory and then prune.
-        # But here we might be inside the worktree or outside.
-        # Assuming we are calling this from outside or we just delete the dir.
-        # Proper way: git worktree remove <path>
-        # But we need to be in a valid git repo.
         if path.exists():
-            # We need to run this from the main repo or another worktree
-            # For now, let's assume we just remove the directory and prune later if needed,
-            # OR we try to run worktree remove from the path itself if it exists?
-            # Actually, `git worktree remove .` works inside.
             try:
-                self._run(["worktree", "remove", "--force", "."], path)
+                self.run_git_cmd(["worktree", "remove", "--force", "."], path)
             except GitError:
-                # Fallback to rm -rf if git fails (e.g. already broken)
                 if path.exists():
                     shutil.rmtree(path)
 
     def get_commit_hash(self, path: Path, ref: str = "HEAD") -> str:
-        return self._run(["rev-parse", ref], path)
+        return self.run_git_cmd(["rev-parse", ref], path)
 
     def get_common_base(self, path: Path, commit1: str, commit2: str) -> str:
-        return self._run(["merge-base", commit1, commit2], path)
+        return self.run_git_cmd(["merge-base", commit1, commit2], path)
 
     def checkout(self, path: Path, ref: str, force: bool = False) -> None:
         args = ["checkout", ref]
         if force:
             args.insert(1, "-f")
-        self._run(args, path)
+        self.run_git_cmd(args, path)
 
     def clean(self, path: Path) -> None:
-        self._run(["clean", "-fdx"], path)
-        self._run(["reset", "--hard", "HEAD"], path)
+        self.run_git_cmd(["clean", "-fdx"], path)
+        self.run_git_cmd(["reset", "--hard", "HEAD"], path)
 
     def fetch(self, path: Path) -> None:
-        self._run(["fetch", "--all"], path)
+        self.run_git_cmd(["fetch", "--all"], path)
 
     def pull(self, path: Path, rebase: bool = False) -> None:
         args = ["pull"]
         if rebase:
             args.append("--rebase")
-        self._run(args, path)
+        self.run_git_cmd(args, path)
 
     def push(self, path: Path, remote: str = "origin", branch: str = "main") -> None:
-        self._run(["push", remote, branch], path)
+        self.run_git_cmd(["push", remote, branch], path)
 
     def update_submodules(self, path: Path) -> None:
-        self._run(["submodule", "update", "--init", "--recursive"], path)
+        self.run_git_cmd(["submodule", "update", "--init", "--recursive"], path)
 
     def set_upstream(self, path: Path, branch: str, upstream: str) -> None:
-        self._run(["branch", "--set-upstream-to", upstream, branch], path)
+        self.run_git_cmd(["branch", "--set-upstream-to", upstream, branch], path)
 
 class MockGitProvider:
     def __init__(self):
         self.calls = []
         self.responses = {}
         self.worktrees = {} # path -> branch
+
+    def run_git_cmd(self, args: List[str], cwd: Path) -> str:
+        self.calls.append(("run_git_cmd", args, cwd))
+        return self.responses.get("run_git_cmd", "")
 
     def get_current_branch(self, path: Path) -> str:
         self.calls.append(("get_current_branch", path))
