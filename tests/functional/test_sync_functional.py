@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 import shutil
 
-def test_create_workspace(base_workspace, run_cli):
+def test_create_workspace(base_workspace, run_cli, daemon):
     """Test creating a new workspace."""
     # 1. Create workspace
     result = run_cli(["create", "feature1", "--base", str(base_workspace)])
@@ -19,7 +19,7 @@ def test_create_workspace(base_workspace, run_cli):
     assert backend_path.exists()
     assert (backend_path / "backend.txt").exists()
 
-def test_sync_command(base_workspace, run_cli):
+def test_sync_command(base_workspace, run_cli, daemon):
     """Test the sync command."""
     # 1. Create feature workspace
     run_cli(["create", "feature1", "--base", str(base_workspace)])
@@ -53,7 +53,7 @@ def test_sync_command(base_workspace, run_cli):
     import json
     config = {
         "base_path": str(base_workspace),
-        "workspaces": {"feature1": {"path": "base-ws-feature1"}}
+        "workspaces": {"feature1": {"path": str(ws_path)}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
@@ -99,7 +99,7 @@ def test_sync_command(base_workspace, run_cli):
     # Base HEAD should NOT be Remote HEAD (because we didn't sync all)
     assert base_head != remote_head
 
-def test_sync_all_command(base_workspace, run_cli):
+def test_sync_all_command(base_workspace, run_cli, daemon):
     """Test the sync --all command."""
     # 1. Create feature workspace
     run_cli(["create", "feature2", "--base", str(base_workspace)])
@@ -119,16 +119,23 @@ def test_sync_all_command(base_workspace, run_cli):
     import json
     config = {
         "base_path": str(base_workspace),
-        "workspaces": {"feature2": {"path": "base-ws-feature2"}}
+        "workspaces": {"feature2": {"path": str(ws_path)}}
     }
     with open(ws_path / "workspace.json", "w") as f:
         json.dump(config, f)
 
     # 3. Run sync --all
+    # Check base-ws branch before sync
+    subprocess.run(["git", "branch", "-vv"], cwd=base_workspace)
+    
     result = run_cli(["sync", "--all"], cwd=ws_path)
     assert result.returncode == 0
     
     # 4. Verify Base Workspace updated
+    if not (base_workspace / "new_file.txt").exists():
+        subprocess.run(["git", "status"], cwd=base_workspace)
+        subprocess.run(["git", "log", "--oneline", "-n", "5"], cwd=base_workspace)
+        subprocess.run(["git", "remote", "-v"], cwd=base_workspace)
     assert (base_workspace / "new_file.txt").exists()
     
     # 5. Verify Feature Workspace updated
@@ -136,18 +143,22 @@ def test_sync_all_command(base_workspace, run_cli):
 
 
 
-def test_preview_sync(base_workspace, run_cli):
+def test_preview_sync(base_workspace, run_cli, daemon):
     """Test preview sync."""
     # 1. Create workspace
     run_cli(["create", "feature1", "--base", str(base_workspace)])
     ws_path = base_workspace.parent / "base-ws-feature1"
     backend_path = ws_path / "backend"
     
+    # Create preview branch in base workspace to help manager?
+    subprocess.run(["git", "branch", "preview"], cwd=base_workspace, check=False)
+    
     # 2. Start preview in background
     import sys
     import os
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path.cwd())
+    env["WORKSPACE_DAEMON_PORT"] = "9090"
     cmd = [sys.executable, "-m", "workspace_cli.main", "preview", "--workspace", "feature1"]
     
     proc = subprocess.Popen(
@@ -175,9 +186,9 @@ def test_preview_sync(base_workspace, run_cli):
         assert target_file.exists()
         assert target_file.read_text() == "hello preview"
         
-        # Verify base workspace backend is on preview branch
+        # Verify base workspace is on preview branch
         # We can check with git
-        res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_workspace/"backend", capture_output=True, text=True)
+        res = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=base_workspace, capture_output=True, text=True)
         assert res.stdout.strip() == "preview"
         
     finally:

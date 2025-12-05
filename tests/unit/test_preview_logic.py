@@ -24,7 +24,7 @@ def test_switch_preview(manager):
         manager.git.responses["get_common_base"] = "base_hash"
         
         with patch("shutil.copytree") as mock_copy:
-            with patch("workspace_cli.server.watcher.Watcher") as MockWatcher:
+            with patch("workspace_cli.server.manager.Watcher") as MockWatcher:
                 mock_watcher_instance = MockWatcher.return_value
                 
                 await manager.switch_preview("feature")
@@ -32,7 +32,9 @@ def test_switch_preview(manager):
                 # Verify Git Ops
                 assert ("clean", Path("/tmp/base")) in manager.git.calls
                 assert ("get_common_base", Path("/tmp/base"), "feature_hash", "main_hash") in manager.git.calls
-                assert ("checkout", Path("/tmp/base"), "base_hash", True) in manager.git.calls
+                # assert ("checkout", Path("/tmp/base"), "base_hash", True) in manager.git.calls
+                # New logic uses run_git_cmd
+                assert ("run_git_cmd", ["checkout", "-B", "preview", "base_hash"], Path("/tmp/base")) in manager.git.calls
                 
                 # Verify Copy
                 mock_copy.assert_called()

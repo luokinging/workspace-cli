@@ -93,6 +93,10 @@ def run_cli(base_workspace):
         if cwd is None:
             cwd = base_workspace
         
+        # Set daemon port if provided (default 9090 for tests)
+        if "WORKSPACE_DAEMON_PORT" not in env:
+            env["WORKSPACE_DAEMON_PORT"] = "9090"
+            
         cmd = [sys.executable, "-m", "workspace_cli.main"] + args
         result = subprocess.run(
             cmd, 
@@ -103,3 +107,55 @@ def run_cli(base_workspace):
         )
         return result
     return _run
+
+@pytest.fixture
+def daemon(base_workspace):
+    """Start the daemon for tests."""
+    import sys
+    import os
+    import time
+    import requests
+    
+    # Start daemon
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    # Use a random port or default 9000?
+    # Tests use default 9000.
+    # We should probably use a different port to avoid conflict with real daemon.
+    # But client defaults to 9000.
+    # Let's use 9000 for now, assuming no other daemon is running.
+    # Or we can configure client to use a different port.
+    # But run_cli uses default.
+    # We can set WORKSPACE_DAEMON_PORT env var.
+    
+    port = 9090
+    env["WORKSPACE_DAEMON_PORT"] = str(port)
+    
+    cmd = [sys.executable, "-m", "workspace_cli.main", "daemon", "--port", str(port)]
+    
+    proc = subprocess.Popen(
+        cmd,
+        cwd=base_workspace, # Daemon runs in base workspace
+        env=env,
+        stdout=None, # Inherit
+        stderr=None, # Inherit
+        text=True
+    )
+    
+    # Wait for startup
+    start_time = time.time()
+    while time.time() - start_time < 10:
+        try:
+            requests.get(f"http://localhost:{port}/status")
+            break
+        except requests.ConnectionError:
+            time.sleep(0.5)
+    else:
+        proc.terminate()
+        raise RuntimeError(f"Daemon failed to start (check logs)")
+        
+    yield f"http://localhost:{port}"
+    
+    # Stop daemon
+    proc.terminate()
+    proc.wait()

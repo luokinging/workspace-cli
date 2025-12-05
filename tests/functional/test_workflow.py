@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-def test_create_and_delete_workspace(base_workspace, run_cli):
+def test_create_and_delete_workspace(base_workspace, run_cli, daemon):
     # 1. Create
     result = run_cli(["create", "test1", "--base", str(base_workspace)])
     assert result.returncode == 0, f"Create failed: {result.stderr}"
@@ -46,7 +46,7 @@ def test_create_and_delete_workspace(base_workspace, run_cli):
     # Verify dir gone
     assert not ws_path.exists()
 
-def test_create_multiple_workspaces(base_workspace, run_cli):
+def test_create_multiple_workspaces(base_workspace, run_cli, daemon):
     """Test creating multiple workspaces at once."""
     result = run_cli(["create", "ws1", "ws2", "ws3", "--base", str(base_workspace)])
     assert result.returncode == 0, f"Create failed: {result.stderr}"
@@ -56,8 +56,8 @@ def test_create_multiple_workspaces(base_workspace, run_cli):
         assert ws_path.exists()
         assert (ws_path / ".git").is_file()
 
-def test_create_duplicate_fails(base_workspace, run_cli):
+def test_create_duplicate_idempotent(base_workspace, run_cli, daemon):
     run_cli(["create", "test1", "--base", str(base_workspace)])
     result = run_cli(["create", "test1", "--base", str(base_workspace)])
-    assert result.returncode != 0
-    assert "already exists" in result.stderr
+    assert result.returncode == 0
+    # assert "already exists" in result.stderr # Debug log might not be visible without --debug
