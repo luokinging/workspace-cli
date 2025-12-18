@@ -3,6 +3,7 @@ import time
 import subprocess
 from pathlib import Path
 import shutil
+import json
 
 def test_create_workspace(base_workspace, run_cli, daemon):
     """Test creating a new workspace."""

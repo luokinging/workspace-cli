@@ -24,9 +24,8 @@ async def test_lazy_config_initialization(tmp_path, caplog):
     # Capture logs
     import logging
     with caplog.at_level(logging.INFO):
-        # Expect FileNotFoundError
-        with pytest.raises(FileNotFoundError, match="No workspace.json found"):
-            await manager.initialize()
+        # Should not raise FileNotFoundError anymore
+        await manager.initialize()
         
     # Verify config is None (failed to load)
     assert manager.config is None

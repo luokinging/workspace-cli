@@ -22,7 +22,7 @@ class WorkspaceManager:
         self.runner = PreviewRunner(base_path)
         self.is_syncing: bool = False
         self._lock = asyncio.Lock()
-        self.config = None
+        self.config: Optional[WorkspaceConfig] = None
 
     @classmethod
     def get_instance(cls, base_path: Path = None, git_provider: GitProvider = None) -> 'WorkspaceManager':
@@ -49,8 +49,8 @@ class WorkspaceManager:
             config_path = find_config_root(self.base_path)
             
             if config_path is None:
-                # 2. If not found, error out.
-                raise FileNotFoundError(f"No workspace.json found at {self.base_path} or its parents.")
+                logger.warning(f"No workspace.json found at {self.base_path} or its parents.")
+                return
 
             logger.info(f"Loading config from {config_path}")
             self.config = load_config(config_path)
@@ -202,6 +202,43 @@ class WorkspaceManager:
         )
         workspace.is_active = True
 
+    async def subscribe_to_logs(self):
+        """Subscribe to preview logs."""
+        queue = await self.runner.add_observer()
+        try:
+            while True:
+                line = await queue.get()
+                if line is None:
+                    break
+                yield line
+        finally:
+            self.runner.remove_observer(queue)
+
+    def save_config(self):
+        """Persist current configuration to disk."""
+        if self.config:
+            from workspace_cli.config import save_config
+            config_path = self.base_path / "workspace.json"
+            logger.info(f"Saving config to {config_path}")
+            save_config(self.config, config_path)
+
+    async def initialize_project(self, base_path: Path):
+        """Complete initialization of a new project."""
+        from workspace_cli.models import WorkspaceConfig, PreviewHooks
+        from workspace_cli.config import save_config
+        
+        self.base_path = base_path.resolve()
+        self.runner.base_path = self.base_path
+        
+        self.config = WorkspaceConfig(
+            base_path=self.base_path,
+            workspaces={},
+            preview=[],
+            preview_hook=PreviewHooks()
+        )
+        self.save_config()
+        logger.info(f"Initialized new project at {self.base_path}")
+
     async def create_workspace(self, names: List[str], base_path: Path = None):
         logger.debug(f"create_workspace called with names={names}")
         async with self._lock:
@@ -233,6 +270,21 @@ class WorkspaceManager:
                     path=str(ws_path),
                     branch=f"workspace-{name}/stand"
                 )
+                
+                if self.config:
+                    from workspace_cli.models import WorkspaceEntry
+                    try:
+                        # Try to store path relative to base_path.parent (the container directory)
+                        # or just relative to base_path if it works better.
+                        # Usually it's simpler to keep it relative to base_path.
+                        import os
+                        rel_path = os.path.relpath(ws_path, self.base_path)
+                        self.config.workspaces[name] = WorkspaceEntry(path=rel_path)
+                    except ValueError:
+                        self.config.workspaces[name] = WorkspaceEntry(path=str(ws_path))
+                    
+                    self.save_config()
+                
                 logger.debug(f"Registered workspace {name}. Current workspaces: {list(self.workspaces.keys())}")
 
     async def delete_workspace(self, name: str):
@@ -248,6 +300,9 @@ class WorkspaceManager:
             
             # 2. Unregister
             del self.workspaces[name]
+            if self.config and name in self.config.workspaces:
+                del self.config.workspaces[name]
+                self.save_config()
 
     async def sync_workspace(self, workspace_name: str, sync_all: bool = False, rebuild_preview: bool = True):
         async with self._lock:
@@ -320,14 +375,3 @@ class WorkspaceManager:
             finally:
                 self.is_syncing = False
 
-    async def subscribe_to_logs(self):
-        """Subscribe to preview logs."""
-        queue = await self.runner.add_observer()
-        try:
-            while True:
-                line = await queue.get()
-                if line is None:
-                    break
-                yield line
-        finally:
-            self.runner.remove_observer(queue)

@@ -42,27 +42,48 @@ def create(
     # Create with base path (first run)
     $ workspace create feature-a --base /path/to/base
     """
+    import asyncio
+    from workspace_cli.config import find_config_root, load_config
+    from workspace_cli.server.manager import WorkspaceManager
+    from workspace_cli.client.api import DaemonClient
+    
+    config_path = find_config_root()
+    client = DaemonClient()
+    
+    use_daemon = False
+    if config_path and client.is_running():
+        use_daemon = True
+    
     try:
-        from workspace_cli.client.api import DaemonClient
-        client = DaemonClient()
-        
-        # TODO: Handle base path if provided. 
-        # If config missing, we might need to initialize daemon with base path?
-        # But Daemon is supposed to be running.
-        # If Daemon is not running, we should probably tell user to start it.
-        # Or auto-start.
-        
-        if base:
-            # If base is provided, we might want to pass it.
-            # But currently create_workspaces takes optional base_path.
-            client.create_workspaces(names, base_path=str(base.resolve()))
+        if use_daemon:
+            if base:
+                client.create_workspaces(names, base_path=str(base.resolve()))
+            else:
+                client.create_workspaces(names)
+            typer.echo(f"Created workspaces via daemon: {', '.join(names)}")
         else:
-            client.create_workspaces(names)
+            # Local execution
+            if not config_path:
+                if not base:
+                    typer.echo("Error: No workspace.json found. You must provide --base to initialize the project.", err=True)
+                    raise typer.Exit(code=1)
+                
+                manager = WorkspaceManager.get_instance(base)
+                asyncio.run(manager.initialize_project(base))
+                typer.echo(f"Initialized new project at {base}")
+            else:
+                # Load existing config for local manager
+                config = load_config(config_path)
+                manager = WorkspaceManager.get_instance(config.base_path)
+                asyncio.run(manager.initialize())
+
+            asyncio.run(manager.create_workspace(names))
+            typer.echo(f"Created workspaces locally: {', '.join(names)}")
             
-        typer.echo(f"Created workspaces: {', '.join(names)}")
-        
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
+        # import traceback
+        # traceback.print_exc()
         raise typer.Exit(code=1)
 
 @app.command()
@@ -76,11 +97,30 @@ def delete(name: str):
     
     $ workspace delete feature-a
     """
+    import asyncio
+    from workspace_cli.client.api import DaemonClient
+    from workspace_cli.config import load_config, find_config_root
+    from workspace_cli.server.manager import WorkspaceManager
+    
+    config_path = find_config_root()
+    client = DaemonClient()
+    use_daemon = config_path and client.is_running()
+
     try:
-        from workspace_cli.client.api import DaemonClient
-        client = DaemonClient()
-        client.delete_workspace(name)
-        typer.echo(f"Deleted workspace: {name}")
+        if use_daemon:
+            client.delete_workspace(name)
+            typer.echo(f"Deleted workspace via daemon: {name}")
+        else:
+            if not config_path:
+                typer.echo("Error: No workspace configuration found.", err=True)
+                raise typer.Exit(code=1)
+            
+            config = load_config(config_path)
+            manager = WorkspaceManager.get_instance(config.base_path)
+            asyncio.run(manager.initialize())
+            asyncio.run(manager.delete_workspace(name))
+            typer.echo(f"Deleted workspace locally: {name}")
+            
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -90,22 +130,38 @@ def status():
     """
     Show workspace status.
     """
+    from workspace_cli.client.api import DaemonClient
+    from workspace_cli.config import load_config, find_config_root
+    from workspace_cli.models import Workspace
+    
+    client = DaemonClient()
+    daemon_running = client.is_running()
+    
     try:
-        from workspace_cli.client.api import DaemonClient
-        client = DaemonClient()
-        if not client.is_running():
-            typer.echo("Daemon is not running.")
-            return
-
-        status = client.get_status()
-        typer.echo(f"Daemon Status: {'Syncing' if status.is_syncing else 'Idle'}")
-        if status.active_preview:
-            typer.echo(f"Active Preview: {status.active_preview}")
-        
-        typer.echo("\nWorkspaces:")
-        for ws in status.workspaces:
-            typer.echo(f"- {ws.name} ({ws.path}) [{'Active' if ws.is_active else 'Inactive'}]")
+        if daemon_running:
+            status = client.get_status()
+            typer.echo(f"Daemon Status: {'Syncing' if status.is_syncing else 'Idle'} (Running)")
+            if status.active_preview:
+                typer.echo(f"Active Preview: {status.active_preview}")
             
+            typer.echo("\nWorkspaces:")
+            for ws in status.workspaces:
+                typer.echo(f"- {ws.name} ({ws.path}) [{'Active' if ws.is_active else 'Inactive'}]")
+        else:
+            typer.echo("Daemon is not running.")
+            config_path = find_config_root()
+            if config_path:
+                config = load_config(config_path)
+                typer.echo("\nWorkspaces (from config):")
+                for name, entry in config.workspaces.items():
+                    # Map config entry to Workspace model for display
+                    ws_path = Path(entry.path)
+                    if not ws_path.is_absolute():
+                        ws_path = (config.base_path / ws_path).resolve()
+                    typer.echo(f"- {name} ({ws_path}) [Inactive]")
+            else:
+                typer.echo("No workspace config found.")
+                
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -199,57 +255,48 @@ def sync(
     2. Perform the git sync.
     3. Rebuild the preview content (if inside a workspace).
     """
+    import asyncio
+    from workspace_cli.client.api import DaemonClient
+    from workspace_cli.config import load_config, find_config_root, detect_current_workspace
+    from workspace_cli.server.manager import WorkspaceManager
+    
+    config_path = find_config_root()
+    client = DaemonClient()
+    use_daemon = config_path and client.is_running()
+
     try:
-        from workspace_cli.client.api import DaemonClient
-        client = DaemonClient()
-        
         # Determine workspace
         workspace_name = None
         if not all:
-            from workspace_cli.config import detect_current_workspace
             workspace_name = detect_current_workspace()
             
             if not workspace_name:
                 typer.echo("Could not auto-detect workspace. Please run from within a workspace or use --all.")
                 raise typer.Exit(code=1)
-                
-            if workspace_name == "base":
-                # If in base, we sync base (which is effectively sync_all=False, target="base"?)
-                # Daemon sync_workspace logic:
-                # targets = [workspace_name] if not sync_all else ...
-                # If we pass "base", does it handle it?
-                # Manager.sync_workspace iterates over targets.
-                # If "base" is not in self.workspaces, it skips.
-                # Base workspace is special.
-                # We need to check Manager logic.
-                # For now, let's assume sync command handles base separately or Manager needs update.
-                # Actually, Manager sync logic:
-                # for name in targets: if name not in self.workspaces: continue
-                # So "base" will be skipped.
-                # We need to handle base sync.
-                # But wait, legacy sync handled base.
-                # Let's look at Manager.sync_workspace again.
-                pass
         
         target = workspace_name if workspace_name and workspace_name != "base" else None
-        
-        # If we are in base and not --all, we probably just want to pull base?
-        # But DaemonClient.sync_workspace sends a request to Daemon.
-        # Daemon syncs workspaces in config.
-        # Base is not in config.workspaces.
-        # So we might need a special flag or handle base sync locally?
-        # Or add base to workspaces?
-        # For now, let's just use the detected name.
-        
-        client.sync_workspace(
-            workspace_name=target if target else "dummy", 
-            sync_all=all, 
-            rebuild_preview=rebuild_preview
-        )
-            
 
-        
-        typer.echo("Sync completed.")
+        if use_daemon:
+            client.sync_workspace(
+                workspace_name=target if target else "dummy", 
+                sync_all=all, 
+                rebuild_preview=rebuild_preview
+            )
+            typer.echo("Sync completed via daemon.")
+        else:
+            if not config_path:
+                typer.echo("Error: No workspace configuration found.", err=True)
+                raise typer.Exit(code=1)
+                
+            config = load_config(config_path)
+            manager = WorkspaceManager.get_instance(config.base_path)
+            asyncio.run(manager.initialize())
+            asyncio.run(manager.sync_workspace(
+                workspace_name=target if target else "dummy",
+                sync_all=all,
+                rebuild_preview=rebuild_preview
+            ))
+            typer.echo("Sync completed locally.")
         
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
